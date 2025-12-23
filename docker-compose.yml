@@ -1,0 +1,112 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    container_name: vas-db
+    environment:
+      POSTGRES_USER: vas
+      POSTGRES_PASSWORD: vas_password
+      POSTGRES_DB: vas_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - vas_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vas -d vas_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: vas-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - vas_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MediaSoup WebRTC Server
+  mediasoup:
+    build:
+      context: ./mediasoup-server
+      dockerfile: Dockerfile
+    container_name: vas-mediasoup
+    network_mode: host
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: vas-backend
+    network_mode: host
+    environment:
+      DATABASE_URL: postgresql://vas:vas_password@localhost:5432/vas_db
+      REDIS_URL: redis://localhost:6379
+      # MEDIASOUP_WORKER_OPTIONS removed - using default from settings.py
+      MEDIASOUP_RTC_MIN_PORT: 40000
+      MEDIASOUP_RTC_MAX_PORT: 40999
+      # API Authentication
+      VAS_REQUIRE_AUTH: "false"  # Set to "true" to enable API key authentication
+      VAS_API_KEY: "vas_default_api_key_change_in_production"  # Default API key when auth is enabled
+    volumes:
+      - ./backend:/app
+      - recordings:/app/recordings
+      - snapshots:/app/snapshots
+    command: uvicorn main:app --host 0.0.0.0 --port 8080 --reload
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: vas-frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://backend:8080
+    ports:
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - vas_net
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  postgres_data:
+  redis_data:
+  recordings:
+  snapshots:
+
+networks:
+  vas_net:
+    driver: bridge

@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# FastAPI
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Frontend
+node_modules/
+.next/
+out/
+dist/
+build/
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker
+docker-compose.override.yml
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log
+logs/
+
+# Media files
+recordings/
+snapshots/
+*.ts
+*.m3u8
+
+# Temporary files
+*.tmp
+.cache/
+
+
+
