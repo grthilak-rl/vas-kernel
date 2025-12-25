@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     s3_access_key: str = Field(default="", alias="S3_ACCESS_KEY")
     s3_secret_key: str = Field(default="", alias="S3_SECRET_KEY")
     minio_endpoint: str = Field(default="", alias="MINIO_ENDPOINT")
+
+    # Phase 1: Frame Ring Buffer
+    ai_frame_export_enabled: bool = Field(default=False, alias="AI_FRAME_EXPORT_ENABLED")
+    ai_frame_width: int = Field(default=1920, alias="AI_FRAME_WIDTH")
+    ai_frame_height: int = Field(default=1080, alias="AI_FRAME_HEIGHT")
+    ai_frame_buffer_capacity: int = Field(default=30, alias="AI_FRAME_BUFFER_CAPACITY")
     
     @classmethod
     def load_mediasoup_options(cls, value: str) -> Dict[str, Any]:

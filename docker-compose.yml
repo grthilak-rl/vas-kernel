@@ -77,6 +77,8 @@ services:
       # API Authentication
       VAS_REQUIRE_AUTH: "false"  # Set to "true" to enable API key authentication
       VAS_API_KEY: "vas_default_api_key_change_in_production"  # Default API key when auth is enabled
+      # Phase 1: Frame Ring Buffer
+      AI_FRAME_EXPORT_ENABLED: "false"  # Set to "true" to enable decoded frame export
     volumes:
       - ./backend:/app
       - recordings:/app/recordings

@@ -8,8 +8,11 @@ import asyncio
 import socket
 import struct
 import os
+import fcntl
+import time
 from typing import Dict, Optional, Any
 from loguru import logger
+from config.settings import settings
 
 
 class RTSPPipeline:
@@ -30,11 +33,129 @@ class RTSPPipeline:
         self.recording_retention_days = 7  # Keep recordings for 7 days
         self.cleanup_task = None
 
+        # Phase 1: Frame buffers and readers
+        self.frame_buffers: Dict[str, Any] = {}  # camera_id -> FrameRingBuffer
+        self.frame_readers: Dict[str, asyncio.Task] = {}  # camera_id -> reader task
+
         logger.info("RTSP Pipeline service initialized")
 
         # Start cleanup task
         asyncio.create_task(self._start_cleanup_service())
-    
+
+    async def _read_raw_frames(
+        self,
+        stream_id: str,
+        pipe_fd: int,
+        width: int,
+        height: int,
+        pixel_format: str
+    ):
+        """
+        Read raw frames from FFmpeg pipe and push to frame buffer.
+
+        Phase 1 reader rules:
+        1. Attempt to read exactly frame_size bytes
+        2. If full frame read: push to buffer
+        3. If partial read or EAGAIN: drop frame immediately
+        4. If pipe closed: exit reader cleanly
+        5. NO accumulating partial frames
+        6. NO blocking
+        7. NO sleeping
+        8. NO retrying reads
+
+        Args:
+            stream_id: Camera/stream identifier
+            pipe_fd: Non-blocking file descriptor for raw frames
+            width: Frame width
+            height: Frame height
+            pixel_format: Pixel format (nv12)
+        """
+        from app.services.frame_buffer import FrameGeometry, FrameRingBuffer
+
+        try:
+            # Validate geometry
+            is_valid, error = FrameGeometry.validate_geometry(width, height, pixel_format)
+            if not is_valid:
+                logger.error(f"Phase 1: Invalid frame geometry for {stream_id}: {error}")
+                return
+
+            # Calculate frame size
+            frame_size = FrameGeometry.calculate_frame_size(width, height, pixel_format)
+            stride = FrameGeometry.calculate_stride(width, pixel_format)
+
+            logger.info(
+                f"Phase 1: Frame reader started for {stream_id} "
+                f"({width}x{height}, {pixel_format}, {frame_size} bytes/frame)"
+            )
+
+            # Get or create frame buffer
+            if stream_id not in self.frame_buffers:
+                self.frame_buffers[stream_id] = FrameRingBuffer(
+                    stream_id,
+                    capacity=settings.ai_frame_buffer_capacity
+                )
+
+            buffer = self.frame_buffers[stream_id]
+            frame_count = 0
+            drop_count = 0
+            last_log_time = time.time()
+
+            while True:
+                try:
+                    # Attempt to read full frame (non-blocking)
+                    data = os.read(pipe_fd, frame_size)
+
+                    if len(data) == 0:
+                        # Pipe closed
+                        logger.info(f"Phase 1: Pipe closed for {stream_id}, exiting frame reader")
+                        break
+
+                    if len(data) == frame_size:
+                        # Full frame received
+                        timestamp = time.time()
+                        frame_id = buffer.push(
+                            timestamp=timestamp,
+                            width=width,
+                            height=height,
+                            pixel_format=pixel_format,
+                            stride=stride,
+                            data=data
+                        )
+                        frame_count += 1
+
+                        # Rate-limited debug logging
+                        if time.time() - last_log_time >= 10.0:
+                            stats = buffer.get_stats()
+                            logger.debug(
+                                f"Phase 1: Frame reader stats for {stream_id}: "
+                                f"frames={frame_count}, drops={drop_count}, "
+                                f"buffer_occupied={stats['occupied_slots']}/{stats['capacity']}"
+                            )
+                            last_log_time = time.time()
+                    else:
+                        # Partial frame - drop it
+                        drop_count += 1
+
+                except BlockingIOError:
+                    # EAGAIN - no data available, drop this frame
+                    drop_count += 1
+                    await asyncio.sleep(0.001)  # Minimal yield to event loop
+
+                except Exception as e:
+                    logger.error(f"Phase 1: Error reading frame for {stream_id}: {e}")
+                    break
+
+        except Exception as e:
+            logger.error(f"Phase 1: Frame reader failed for {stream_id}: {e}")
+        finally:
+            # Cleanup
+            try:
+                os.close(pipe_fd)
+            except:
+                pass
+
+            logger.info(f"Phase 1: Frame reader stopped for {stream_id}")
+
     async def capture_ssrc_with_temp_ffmpeg(
         self,
         rtsp_url: str,
@@ -324,15 +445,50 @@ class RTSPPipeline:
                 hls_playlist_path
             ])
 
+            # Phase 1: Output 3: Raw frames for AI (ONLY when enabled)
+            if settings.ai_frame_export_enabled:
+                ffmpeg_cmd.extend([
+                    "-map", "0:v:0",
+                    "-c:v", "rawvideo",
+                    "-pix_fmt", "nv12",
+                    "-f", "rawvideo",
+                    "pipe:3"
+                ])
+                logger.info("Phase 1: AI frame export ENABLED - adding raw video output to pipe:3")
+
             logger.info(f"Starting FFmpeg to send RTP to MediaSoup port {mediasoup_video_port}")
             logger.debug(f"FFmpeg command: {' '.join(ffmpeg_cmd)}")
 
-            # Start FFmpeg process
-            process = await asyncio.create_subprocess_exec(
-                *ffmpeg_cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
+            # Phase 1: Prepare pipe:3 for raw frame export (ONLY when enabled)
+            raw_frame_pipe_fd = None
+            if settings.ai_frame_export_enabled:
+                # Create pipe for FFmpeg pipe:3 output
+                pipe_read, pipe_write = os.pipe()
+                raw_frame_pipe_fd = pipe_read
+
+                # Set read end to non-blocking mode
+                flags = fcntl.fcntl(pipe_read, fcntl.F_GETFL)
+                fcntl.fcntl(pipe_read, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+                logger.info(f"Phase 1: Created non-blocking pipe for raw frames (read_fd={pipe_read}, write_fd={pipe_write})")
+
+                # Start FFmpeg process with pipe:3 mapped to pipe_write
+                process = await asyncio.create_subprocess_exec(
+                    *ffmpeg_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    pass_fds=(pipe_write,)
+                )
+
+                # Close write end in parent process (FFmpeg owns it)
+                os.close(pipe_write)
+            else:
+                # Start FFmpeg process normally (no pipe:3)
+                process = await asyncio.create_subprocess_exec(
+                    *ffmpeg_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
 
             self.ffmpeg_processes[stream_id] = process
 
@@ -357,6 +513,20 @@ class RTSPPipeline:
                 error_output = await process.stderr.read()
                 logger.error(f"FFmpeg process exited immediately with code {process.returncode}: {error_output.decode()}")
                 raise RuntimeError(f"FFmpeg failed to start: {error_output.decode()}")
+
+            # Phase 1: Start frame reader (ONLY when enabled)
+            if settings.ai_frame_export_enabled and raw_frame_pipe_fd is not None:
+                reader_task = asyncio.create_task(
+                    self._read_raw_frames(
+                        stream_id=stream_id,
+                        pipe_fd=raw_frame_pipe_fd,
+                        width=settings.ai_frame_width,
+                        height=settings.ai_frame_height,
+                        pixel_format="nv12"
+                    )
+                )
+                self.frame_readers[stream_id] = reader_task
+                logger.info(f"Phase 1: Frame reader task started for {stream_id}")
 
             stream_info = {
                 "stream_id": stream_id,
@@ -405,6 +575,27 @@ class RTSPPipeline:
             logger.warning(f"Stream {stream_id} is not tracked as active, but will attempt cleanup anyway")
         else:
             logger.info(f"Stopping stream: {stream_id}")
+
+        # Phase 1: Stop frame reader and cleanup buffer (ONLY when enabled)
+        if settings.ai_frame_export_enabled:
+            # Cancel frame reader task
+            if stream_id in self.frame_readers:
+                reader_task = self.frame_readers[stream_id]
+                if not reader_task.done():
+                    reader_task.cancel()
+                    try:
+                        await reader_task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception as e:
+                        logger.warning(f"Phase 1: Error canceling frame reader for {stream_id}: {e}")
+                del self.frame_readers[stream_id]
+                logger.info(f"Phase 1: Frame reader stopped for {stream_id}")
+
+            # Destroy frame buffer
+            if stream_id in self.frame_buffers:
+                del self.frame_buffers[stream_id]
+                logger.info(f"Phase 1: Frame buffer destroyed for {stream_id}")
 
         # Stop tracked FFmpeg process if running
         if stream_id in self.ffmpeg_processes:
