@@ -1,6 +1,10 @@
-You are implementing **Phase 1 – Frame Ring Buffer** for VAS.
+You are implementing **VAS Kernel Phases** incrementally.
 
-VAS is a **frozen reference implementation**. You MUST treat all existing behavior as correct and non-negotiable.
+VAS is a **frozen reference implementation**.  
+All existing behavior is correct and non-negotiable.
+
+Current active phase will be explicitly stated in the prompt.
+If unsure, STOP and ASK.
 
 ===============================
 ABSOLUTE RULES (DO NOT VIOLATE)
@@ -22,28 +26,25 @@ ABSOLUTE RULES (DO NOT VIOLATE)
 If unsure, STOP and ASK.
 
 ===============================
-PHASE 1 GOAL
+PHASE STATUS
 ===============================
 
-Expose **decoded video frames** from VAS in a **read-only, non-blocking, bounded** way so AI systems can observe frames **without impacting**:
+Phase 1 – Frame Ring Buffer: **COMPLETED**  
+Phase 2 – Frame Export Interface: **ACTIVE**
 
-- RTSP ingestion
-- MediaSoup streaming
-- recording
-- multi-viewer behavior
-
-VAS must behave IDENTICALLY when Phase 1 is disabled.
+Only the ACTIVE phase may be implemented.
 
 ===============================
-FEATURE FLAG (MANDATORY)
+FEATURE FLAGS (MANDATORY)
 ===============================
 
-All Phase 1 logic MUST be guarded by:
+All Phase 1 and Phase 2 logic MUST be guarded by:
 
 AI_FRAME_EXPORT_ENABLED=false
 
 When false:
 - No frame buffers allocated
+- No shared memory created
 - No frame copies
 - Zero overhead
 
@@ -56,7 +57,7 @@ Frame tap point is ONLY at the FFmpeg **decode boundary**:
 RTSP → FFmpeg decode → RAW FRAME
                          ├── Recording (existing)
                          ├── MediaSoup Producer (existing)
-                         └── Frame Ring Buffer (NEW)
+                         └── Kernel Frame Path (Phase 1/2)
 
 Do NOT tap frames:
 - after MediaSoup
@@ -65,33 +66,59 @@ Do NOT tap frames:
 - inside WebRTC code
 
 ===============================
-FRAME BUFFER DESIGN
+PHASE 1 – FRAME RING BUFFER (COMPLETED)
 ===============================
 
-- One ring buffer PER CAMERA
-- Fixed size (configurable)
-- Overwrite-safe
-- Non-blocking writer
-- No locks in decode path
+Phase 1 exposed decoded video frames in a **read-only, non-blocking, bounded** manner so AI systems can observe frames **without impacting**:
 
-Frame loss is acceptable. Video disruption is not.
+- RTSP ingestion
+- MediaSoup streaming
+- recording
+- multi-viewer behavior
+
+Phase 1 behavior MUST remain unchanged.
 
 ===============================
-FRAME DATA MODEL
+PHASE 2 – FRAME EXPORT INTERFACE (ACTIVE)
 ===============================
 
-Each frame entry MUST include:
+Phase 2 exposes raw frames via **local shared memory only**.
 
-frame_id        (monotonic per camera)
-timestamp       (PTS or monotonic clock)
-camera_id
-width
-height
-pixel_format
-stride
-raw pixel buffer (by reference)
+Scope is STRICTLY limited to:
+- frame.data (raw NV12 bytes)
+- frame.meta (binary metadata header)
+- write-only export from VAS
+- pull-based, best-effort semantics
+- local-host only visibility
 
-No encoding. No serialization.
+===============================
+WHAT TO IMPLEMENT (PHASE-DEPENDENT)
+===============================
+
+Phase 1 (COMPLETED):
+- Frame ring buffer data structure
+- Buffer lifecycle tied to camera stream start/stop
+- Non-blocking frame copy at decode boundary
+
+Phase 2 (ACTIVE):
+- Shared memory frame export
+- frame.data + frame.meta layout
+- Best-effort write semantics
+- Feature-flag guarded activation
+
+===============================
+WHAT NOT TO IMPLEMENT (GLOBAL)
+===============================
+
+- AI models or inference
+- Model identifiers or subscriptions
+- FPS scheduling
+- GPU work
+- Frontend overlays
+- Network APIs
+- Multi-host support
+- Persistence
+- Any Phase 3+ behavior
 
 ===============================
 MEMORY & CONCURRENCY
@@ -105,38 +132,20 @@ MEMORY & CONCURRENCY
 - Reader slowness must never affect writer
 
 ===============================
-WHAT TO IMPLEMENT (ONLY THIS)
-===============================
-
-- Frame ring buffer data structure
-- Buffer lifecycle tied to camera stream start/stop
-- Non-blocking frame copy at decode boundary
-- Feature-flag guarded activation
-- Minimal test-only frame reader (optional)
-
-===============================
-WHAT NOT TO IMPLEMENT
-===============================
-
-- AI models or inference
-- Scheduling logic
-- GPU work
-- Frontend overlays
-- Network APIs
-- Multi-host support
-
-===============================
 SUCCESS CRITERIA
 ===============================
 
-Phase 1 is complete ONLY IF:
-
+Phase 1 remains valid ONLY IF:
 - VAS behaves exactly as before with AI disabled
-- With AI enabled:
-  - memory usage is bounded
-  - decode path never blocks
+- Decode path never blocks
 - Multi-viewer streaming still works
-- Frame drops under load do not affect video
+
+Phase 2 is complete ONLY IF:
+- Frames are visible via shared memory when enabled
+- No performance impact when unused
+- No AI or scheduling logic introduced
+- VAS remains sole writer
+- Failure of readers does not affect VAS
 
 ===============================
 OUTPUT EXPECTATION
@@ -145,6 +154,6 @@ OUTPUT EXPECTATION
 - Minimal, surgical diff
 - Fully reversible
 - Well-commented where correctness is critical
-- No behavior changes outside Phase 1
+- No behavior changes outside the active phase
 
 If any change risks violating these constraints, STOP and ASK before proceeding.
