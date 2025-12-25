@@ -13,6 +13,7 @@ BACKEND_PORT=${BACKEND_PORT:-"8080"}
 echo "Starting Backend on ${BACKEND_IP}:${BACKEND_PORT}..."
 cd backend
 pkill -f "uvicorn main:app" 2>/dev/null
+source venv/bin/activate
 nohup python3 -m uvicorn main:app --host 0.0.0.0 --port ${BACKEND_PORT} > /tmp/backend.log 2>&1 &
 BACKEND_PID=$!
 echo "Backend PID: $BACKEND_PID"

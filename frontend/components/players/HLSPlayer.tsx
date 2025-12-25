@@ -9,6 +9,7 @@ interface HLSPlayerProps {
   deviceId?: string;
   onSnapshotCaptured?: (snapshotId: string) => void;
   hideControls?: boolean;
+  seekToTime?: number;
 }
 
 export interface HLSPlayerRef {
@@ -16,7 +17,7 @@ export interface HLSPlayerRef {
 }
 
 const HLSPlayer = forwardRef<HLSPlayerRef, HLSPlayerProps>(
-  ({ streamUrl, deviceName, deviceId, onSnapshotCaptured, hideControls = false }, ref) => {
+  ({ streamUrl, deviceName, deviceId, onSnapshotCaptured, hideControls = false, seekToTime }, ref) => {
     const videoRef = useRef<HTMLVideoElement>(null);
     const [error, setError] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);

@@ -106,38 +106,80 @@ async def start_device_stream(
     try:
         room_id = str(device_id)
 
-        # 0. CHECK: If stream is already active, return existing stream info instead of restarting
-        # This prevents disrupting active streams when Ruth AI or VAS portal reconnects
-        if room_id in rtsp_pipeline.active_streams:
-            logger.info(f"Stream already active for device {device_id}, returning existing stream info")
-            stream_info = rtsp_pipeline.active_streams[room_id]
+        # ============================================================================
+        # CRITICAL GUARD: Multi-Viewer Support (Camera-Scoped Producer Model)
+        # ============================================================================
+        # MediaSoup producers are CAMERA-SCOPED, not viewer-scoped.
+        #
+        # Correct Architecture:
+        #   RTSP Camera → FFmpeg (1 per camera) → Producer (1 per camera) → N Consumers (1 per viewer)
+        #
+        # RULES (DO NOT VIOLATE):
+        #   1. Producers created ONCE per camera stream
+        #   2. Producers destroyed ONLY on explicit stop-stream
+        #   3. Viewer connect/disconnect MUST NOT affect producer lifecycle
+        #   4. Multiple viewers share the same producer via independent consumers
+        #
+        # If producer exists → REUSE IT (this is the expected, correct path)
+        # If producer missing → CREATE NEW (only on initial stream start)
+        # ============================================================================
+        try:
+            existing_producers = await mediasoup_client.get_producers(room_id)
+            if existing_producers:
+                # ✅ EXPECTED PATH: Reusing existing producer for additional viewer
+                logger.warning(
+                    f"✅ PRODUCER REUSE (Multi-Viewer): Device {device_id} | "
+                    f"Producer {existing_producers[-1]} | "
+                    f"This is CORRECT behavior - multiple viewers share one producer"
+                )
 
-            # Get existing producers for this room
-            try:
-                existing_producers = await mediasoup_client.get_producers(room_id)
-                if existing_producers:
-                    # Return info about existing stream
-                    return {
-                        "status": "success",
-                        "device_id": str(device_id),
-                        "room_id": room_id,
-                        "transport_id": stream_info.get("transport_id", "unknown"),
-                        "producers": {
-                            "video": existing_producers[-1] if existing_producers else "unknown"
-                        },
-                        "stream": {
-                            "status": "active",
-                            "message": "Stream already running",
-                            "started_at": stream_info.get("started_at")
-                        },
-                        "reconnect": True  # Flag indicating this was a reconnect, not a new stream
-                    }
-            except Exception as e:
-                logger.warning(f"Error getting existing producers, will restart stream: {e}")
-                # If we can't get producer info, fall through to restart the stream
-                await rtsp_pipeline.stop_stream(room_id)
-        
-        # Also kill any orphaned FFmpeg processes for this RTSP URL as a safety measure
+                # ============================================================================
+                # NOTE: rtsp_pipeline.active_streams is NOT authoritative for producer lifecycle
+                # ============================================================================
+                # This in-memory dict is used ONLY for metadata (timestamps, transport info).
+                # MediaSoup producer existence (checked above) is the ONLY source of truth.
+                # This dict can be cleared on backend reload - never use it as a lifecycle guard.
+                # ============================================================================
+                stream_info = rtsp_pipeline.active_streams.get(room_id, {})
+
+                # Return info about existing stream
+                # CRITICAL: Early return prevents FFmpeg cleanup and producer recreation below
+                return {
+                    "status": "success",
+                    "device_id": str(device_id),
+                    "room_id": room_id,
+                    "transport_id": stream_info.get("transport_id", "unknown"),
+                    "producers": {
+                        "video": existing_producers[-1] if existing_producers else existing_producers[0]
+                    },
+                    "stream": {
+                        "status": "active",
+                        "message": "Stream already running, sharing producer with other viewers",
+                        "started_at": stream_info.get("started_at", "unknown")
+                    },
+                    "reconnect": True  # Flag indicating this was a reconnect, not a new stream
+                }
+        except Exception as e:
+            logger.warning(f"Error checking existing producers: {e}")
+            # If we can't check producers, proceed with caution - don't auto-restart
+            # Check if stream is tracked as active
+            if room_id in rtsp_pipeline.active_streams:
+                logger.error(f"Stream marked active but can't verify producers - may need manual restart")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Stream state inconsistent - please stop and restart the stream"
+                )
+
+        # ============================================================================
+        # NEW STREAM CREATION PATH - Only runs when no existing producer
+        # ============================================================================
+        # If we reach this point, no producer exists, so we're starting a new stream.
+        # It's safe to clean up orphaned FFmpeg processes before starting fresh.
+        # ============================================================================
+
+        # Kill any orphaned FFmpeg processes for this RTSP URL before starting new stream
+        # CRITICAL: This block MUST NOT run during producer reuse (viewer joins)
+        # FFmpeg is camera-scoped - killing it would disrupt all active viewers
         import subprocess
         import os
         try:
@@ -225,21 +267,27 @@ async def start_device_stream(
             "encodings": [{"ssrc": detected_ssrc}]  # Use captured SSRC - REQUIRED for PlainRtpTransport
         }
 
-        # Close any old producers for this room to prevent accumulation
-        try:
-            old_producers = await mediasoup_client.get_producers(room_id)
-            if old_producers:
-                logger.info(f"Found {len(old_producers)} old producer(s) for room {room_id}, cleaning up...")
-                for old_producer_id in old_producers:
-                    try:
-                        await mediasoup_client.close_producer(old_producer_id)
-                        logger.info(f"Closed old producer: {old_producer_id}")
-                    except Exception as e:
-                        logger.warning(f"Failed to close old producer {old_producer_id}: {e}")
-        except Exception as e:
-            logger.warning(f"Error cleaning up old producers: {e}")
+        # ============================================================================
+        # PRODUCER CREATION GUARD: This Should Only Happen ONCE Per Camera Stream
+        # ============================================================================
+        # This code path creates a NEW producer, which should ONLY occur when:
+        #   1. Initial stream start (no existing producer)
+        #   2. After explicit stop-stream (producer was destroyed)
+        #
+        # If you see this log repeatedly for the same device without stop-stream:
+        #   ❌ BUG DETECTED - Producer lifecycle is broken
+        #   ❌ Multiple viewers are triggering producer recreation
+        #   ❌ Check that the early return guard above is working correctly
+        #
+        # Expected pattern in logs:
+        #   - "🆕 NEW PRODUCER" once per camera when stream starts
+        #   - "✅ PRODUCER REUSE" many times as viewers connect/reconnect
+        # ============================================================================
+        logger.warning(
+            f"🆕 NEW PRODUCER CREATION: Device {device_id} | SSRC {detected_ssrc} | "
+            f"This should ONLY happen on initial stream start, NOT on viewer reconnect"
+        )
 
-        logger.info(f"Creating producer with SSRC: {detected_ssrc}")
         video_producer = await mediasoup_client.create_producer(
             transport_id, "video", video_rtp_parameters
         )
@@ -489,5 +537,3 @@ async def get_device_status(
             "started_at": stream_info.get("started_at") if stream_info else None
         }
     }
-
-

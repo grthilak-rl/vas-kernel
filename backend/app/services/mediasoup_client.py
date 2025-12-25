@@ -5,6 +5,7 @@ Communicates with the MediaSoup Node.js server via WebSocket
 """
 import asyncio
 import json
+import os
 import websockets
 from typing import Dict, Optional, Any, List
 from loguru import logger
@@ -264,5 +265,6 @@ class MediaSoupClient:
 
 
 # Global MediaSoup client instance
-mediasoup_client = MediaSoupClient()
+mediasoup_url = os.getenv("MEDIASOUP_URL", "ws://localhost:3001")
+mediasoup_client = MediaSoupClient(mediasoup_url)
 
