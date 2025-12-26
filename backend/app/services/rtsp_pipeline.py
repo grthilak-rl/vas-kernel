@@ -37,6 +37,9 @@ class RTSPPipeline:
         self.frame_buffers: Dict[str, Any] = {}  # camera_id -> FrameRingBuffer
         self.frame_readers: Dict[str, asyncio.Task] = {}  # camera_id -> reader task
 
+        # Phase 2: Frame exporters
+        self.frame_exporters: Dict[str, Any] = {}  # camera_id -> FrameExporter
+
         logger.info("RTSP Pipeline service initialized")
 
         # Start cleanup task
@@ -122,6 +125,26 @@ class RTSPPipeline:
                             data=data
                         )
                         frame_count += 1
+
+                        # Phase 2: Export frame to shared memory (if enabled)
+                        # CRITICAL: Must never block or fail the decode path
+                        if stream_id in self.frame_exporters:
+                            try:
+                                exporter = self.frame_exporters[stream_id]
+                                # Convert timestamp to nanoseconds
+                                timestamp_ns = int(timestamp * 1_000_000_000)
+                                exporter.export_frame(
+                                    frame_id=frame_id,
+                                    timestamp_ns=timestamp_ns,
+                                    width=width,
+                                    height=height,
+                                    pixel_format=pixel_format,
+                                    stride=stride,
+                                    data=data
+                                )
+                            except Exception as e:
+                                # CRITICAL: Never let export failures affect decode
+                                logger.warning(f"Phase 2: Frame export failed for {stream_id}: {e}")
 
                         # Rate-limited debug logging
                         if time.time() - last_log_time >= 10.0:
@@ -528,6 +551,19 @@ class RTSPPipeline:
                 self.frame_readers[stream_id] = reader_task
                 logger.info(f"Phase 1: Frame reader task started for {stream_id}")
 
+                # Phase 2: Initialize frame exporter (ONLY when enabled)
+                try:
+                    from app.services.frame_exporter import FrameExporter
+                    exporter = FrameExporter(camera_id=stream_id)
+                    if exporter.initialize():
+                        self.frame_exporters[stream_id] = exporter
+                        logger.info(f"Phase 2: Frame exporter initialized for {stream_id}")
+                    else:
+                        logger.warning(f"Phase 2: Frame exporter initialization failed for {stream_id}")
+                except Exception as e:
+                    # CRITICAL: Never let exporter initialization break stream start
+                    logger.error(f"Phase 2: Failed to create frame exporter for {stream_id}: {e}")
+
             stream_info = {
                 "stream_id": stream_id,
                 "rtsp_url": rtsp_url,
@@ -596,6 +632,17 @@ class RTSPPipeline:
             if stream_id in self.frame_buffers:
                 del self.frame_buffers[stream_id]
                 logger.info(f"Phase 1: Frame buffer destroyed for {stream_id}")
+
+            # Phase 2: Cleanup frame exporter (ONLY when enabled)
+            if stream_id in self.frame_exporters:
+                try:
+                    exporter = self.frame_exporters[stream_id]
+                    exporter.cleanup()
+                    del self.frame_exporters[stream_id]
+                    logger.info(f"Phase 2: Frame exporter cleaned up for {stream_id}")
+                except Exception as e:
+                    # CRITICAL: Never let cleanup failures affect stream stop
+                    logger.error(f"Phase 2: Error cleaning up frame exporter for {stream_id}: {e}")
 
         # Stop tracked FFmpeg process if running
         if stream_id in self.ffmpeg_processes:
