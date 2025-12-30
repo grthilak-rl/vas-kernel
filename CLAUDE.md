@@ -33,7 +33,8 @@ Phase 1 – Frame Ring Buffer: **COMPLETED**
 Phase 2 – Frame Export Interface: **COMPLETED**  
 Phase 3.1 – Stream Agent Internal State Model: **COMPLETED**  
 Phase 3.2 – Subscription Model & Frame Binding: **COMPLETED**  
-Phase 3.3 – FPS Scheduling & Frame Selection: **ACTIVE**
+Phase 3.3 – FPS Scheduling & Frame Selection: **COMPLETED**  
+Phase 3.4 – Failure & Restart Semantics: **ACTIVE**
 
 Only phases marked **ACTIVE** may be implemented.  
 All other phases are frozen and must not be modified.
@@ -128,7 +129,8 @@ Stream Agent responsibilities (cumulative across Phase 3):
 - Bind to frame export (read-only)
 - Select frames per subscription
 - Enforce per-model FPS limits
-- Dispatch frames to models (future phases)
+- Handle failure isolation semantics
+- Dispatch frames to models (Phase 4+)
 
 Stream Agent MUST NEVER:
 - Store frames
@@ -136,71 +138,89 @@ Stream Agent MUST NEVER:
 - Control video pipelines
 
 ===============================
-PHASE 3.3 – FPS SCHEDULING & FRAME SELECTION (ACTIVE)
+PHASE 3.4 – FAILURE & RESTART SEMANTICS (ACTIVE)
 ===============================
 
-Phase 3.3 introduces **decision-only frame gating**.
+Phase 3.4 defines **strict failure isolation rules only**.
 
 GOAL:
-- Decide whether a frame SHOULD be dispatched to a subscription
-- Enforce FPS as a **maximum**, never a target
-- Allow unlimited frame drops
+- Explicitly define what happens when components fail
+- Ensure failures NEVER cascade across boundaries
+- Encode failure behavior as **design invariants**, not recovery logic
 
-This phase ends at **dispatch eligibility decision**.
+This phase introduces **NO execution, NO retries, NO recovery**.
+
+----------------
+FAILURE DOMAINS
+----------------
+
+Failures are isolated by domain:
+
+- VAS Kernel
+- Frame Export Interface
+- Ruth AI Core (global)
+- Stream Agent (per camera)
+- Subscription / Model (per model)
+
+Each domain MUST fail independently.
+
+----------------
+FAILURE RULES (MANDATORY)
+----------------
+
+- VAS failure → outside Phase 3 scope
+- Frame export loss → Stream Agent idles silently
+- Ruth AI Core crash → VAS is completely unaffected
+- Stream Agent crash → affects only that camera
+- Model failure → affects only that subscription
+
+----------------
+FORBIDDEN FAILURE BEHAVIOR
+----------------
+
+The system MUST NOT:
+
+- Retry inference
+- Restart models
+- Buffer frames for recovery
+- Coordinate restarts across components
+- Attempt graceful draining
+- Persist failure state
+- Emit alerts or notifications
+- Perform health-based control decisions
+
+----------------
+ALLOWED BEHAVIOR
+----------------
+
+- Silent frame drops
+- Stateless idling
+- Lossy behavior
+- Best-effort continuation
+
+If something fails, it is simply **skipped**.
 
 ----------------
 WHAT TO IMPLEMENT
 ----------------
 
-- Per-subscription FPS gating logic
-- Frame eligibility checks using:
-  - last_dispatched_timestamp OR
-  - last_dispatched_frame_id
-- Stateless or minimal per-subscription bookkeeping
-- Pure decision logic (allow / skip)
+- Explicit failure semantics documentation
+- Defensive coding (fail-closed decisions)
+- No-op behavior on failure paths
+- Clear separation of failure domains
 
 ----------------
 WHAT NOT TO IMPLEMENT
 ----------------
 
-- Frame reads
-- Shared memory access
-- Timers, sleeps, or scheduling loops
-- Queues or buffers
-- Background threads or async workers
-- Frame dispatch
-- Model execution
-- Error retries or recovery
+- Recovery logic
+- Supervisors
+- Watchdogs
+- Health checks
+- Circuit breakers
+- Backoff logic
+- Metrics or alerts
 - Persistence
-
-----------------
-FPS ENFORCEMENT RULES
-----------------
-
-- FPS is a MAXIMUM, not a guarantee
-- Frames may be skipped freely
-- No catch-up behavior
-- No token buckets
-- No fairness logic
-- No time-based sleeps
-
-----------------
-FRAME SELECTION RULES
-----------------
-
-- Each subscription is evaluated independently
-- A frame allowed for one model may be skipped for another
-- Decisions are instantaneous and non-blocking
-- Dropping frames is expected and correct
-
-----------------
-FAILURE & ISOLATION RULES
-----------------
-
-- Scheduler failure affects only that subscription
-- Stream Agent failure affects only that camera
-- Ruth AI Core failure does NOT affect VAS
-- No retries, restarts, or recovery coordination
 
 If unsure, **STOP and ASK**.
 
@@ -222,23 +242,12 @@ WHAT NOT TO IMPLEMENT (GLOBAL)
 SUCCESS CRITERIA
 ===============================
 
-Phase 1 remains valid ONLY IF:
-- VAS behaves exactly as before with AI disabled
-- Decode path never blocks
-- Multi-viewer streaming still works
-
-Phase 2 remains valid ONLY IF:
-- Frames visible via shared memory when enabled
-- No performance impact when unused
-- VAS remains sole writer
-- Reader failure does not affect VAS
-
-Phase 3.3 is complete ONLY IF:
-- FPS gating exists as pure decision logic
-- Frames are skipped without side effects
-- No scheduling loops or timers exist
-- No frame access occurs
-- No dispatch or execution occurs
+Phase 3.4 is complete ONLY IF:
+- Failure behavior is explicitly defined
+- Failures do not cascade
+- No retries or recovery logic exists
+- Ruth AI Core failure never impacts VAS
+- Stream Agent failure scope is limited to one camera
 
 ===============================
 OUTPUT EXPECTATION

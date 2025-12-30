@@ -2,6 +2,7 @@
 Phase 3.1 – Stream Agent Internal State Model
 Phase 3.2 – Subscription Model & Frame Binding
 Phase 3.3 – FPS Scheduling & Frame Selection
+Phase 3.4 – Failure & Restart Semantics
 
 This module defines the StreamAgent abstraction.
 
@@ -20,6 +21,18 @@ PHASE 3.3 SCOPE:
 - FPS gating decision logic (pure computation)
 - Per-subscription frame selection (ALLOW or SKIP)
 - No frame access, no dispatch execution, no loops
+
+PHASE 3.4 SCOPE:
+- Defensive guards for failure isolation
+- Fail-closed behavior for invalid states
+- Explicit failure boundaries (no recovery, no retries)
+
+FAILURE SEMANTICS (PHASE 3.4):
+- Inactive subscription → frames silently skipped
+- Invalid subscription config → fail-closed (skip)
+- Frame source missing → StreamAgent idles (no error)
+- StreamAgent STOPPED → no dispatch decisions allowed
+- Ruth AI Core failure → MUST NOT affect VAS (isolated)
 
 WHAT THIS IS NOT:
 - Not a thread or process
@@ -65,6 +78,10 @@ class StreamAgent:
     PHASE 3.3 ADDITIONS:
     - FPS gating decision logic (should_dispatch)
     - Per-subscription frame selection
+
+    PHASE 3.4 ADDITIONS:
+    - Defensive guards for STOPPED state
+    - Explicit failure isolation semantics
     """
 
     def __init__(self, camera_id: str, frame_source_path: Optional[str] = None):
@@ -93,6 +110,10 @@ class StreamAgent:
         # Phase 3.2: Logical frame source binding
         # This is a REFERENCE ONLY - no file access, no memory mapping
         # Future phases will use this to know where frames come from
+        #
+        # Phase 3.4: If frame_source_path is None, StreamAgent idles gracefully.
+        # Missing frame source is NOT an error - it simply means no frames available.
+        # This preserves failure isolation: frame export failure affects only Ruth AI.
         self.frame_source_path: Optional[str] = frame_source_path
 
         # Phase 3.2: Subscription storage
@@ -279,6 +300,12 @@ class StreamAgent:
         4. If sufficient time has elapsed since last dispatch → ALLOW
         5. Otherwise → SKIP
 
+        PHASE 3.4 FAILURE SEMANTICS:
+        - If StreamAgent is STOPPED → SKIP (fail-closed)
+        - If subscription is inactive → SKIP (fail-closed)
+        - If invalid FPS config → SKIP (fail-closed)
+        - No recovery, no retries, no logging
+
         Args:
             subscription: The subscription to evaluate
             frame_id: Current frame identifier (monotonic)
@@ -292,6 +319,11 @@ class StreamAgent:
             This method does NOT update subscription state.
             Caller must call record_dispatch() if dispatch succeeds.
         """
+        # Phase 3.4: Defensive guard - STOPPED agents cannot make dispatch decisions
+        # This enforces failure isolation: once stopped, agent is inert
+        if self.state == AgentState.STOPPED:
+            return False
+
         # Fail-closed: inactive subscriptions never receive frames
         if not subscription.active:
             return False
@@ -341,11 +373,27 @@ class StreamAgent:
         - No actual dispatch execution
         - Caller is responsible for actual dispatch (Phase 3.4+)
 
+        PHASE 3.4 FAILURE SEMANTICS:
+        - If StreamAgent is STOPPED → silently ignore (no-op)
+        - If subscription is inactive → silently ignore (no-op)
+        - No exceptions raised, no recovery, no logging
+
         Args:
             subscription: The subscription that received the frame
             frame_id: The dispatched frame identifier
             frame_timestamp: The dispatched frame timestamp
         """
+        # Phase 3.4: Defensive guard - STOPPED agents do not update state
+        # Fail-closed: silently ignore state updates for stopped agents
+        if self.state == AgentState.STOPPED:
+            return
+
+        # Phase 3.4: Defensive guard - inactive subscriptions do not update state
+        # Fail-closed: silently ignore state updates for inactive subscriptions
+        if not subscription.active:
+            return
+
+        # Update subscription dispatch state
         subscription.last_dispatched_frame_id = frame_id
         subscription.last_dispatch_timestamp = frame_timestamp
 
