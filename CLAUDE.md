@@ -32,7 +32,8 @@ PHASE STATUS (AUTHORITATIVE)
 Phase 1 – Frame Ring Buffer: **COMPLETED**  
 Phase 2 – Frame Export Interface: **COMPLETED**  
 Phase 3.1 – Stream Agent Internal State Model: **COMPLETED**  
-Phase 3.2 – Subscription Model & Frame Binding: **ACTIVE**
+Phase 3.2 – Subscription Model & Frame Binding: **COMPLETED**  
+Phase 3.3 – FPS Scheduling & Frame Selection: **ACTIVE**
 
 Only phases marked **ACTIVE** may be implemented.  
 All other phases are frozen and must not be modified.
@@ -102,9 +103,9 @@ Phase 3 introduces **Ruth AI Core**, a control-plane orchestration service.
 
 PHASE 3 IS:
 - Camera ↔ model orchestration
-- Per-model FPS enforcement (future)
-- Frame routing to model containers (future)
-- Metadata event generation (future)
+- Per-model FPS enforcement
+- Frame routing to model runtimes
+- Metadata event generation
 
 PHASE 3 IS NOT:
 - Video pipeline
@@ -125,8 +126,9 @@ PHASE 3 CORE ABSTRACTION: STREAM AGENT
 Stream Agent responsibilities (cumulative across Phase 3):
 - Maintain model subscriptions
 - Bind to frame export (read-only)
-- Enforce per-model FPS limits (Phase 3.3+)
-- Dispatch frames to models (Phase 3.3+)
+- Select frames per subscription
+- Enforce per-model FPS limits
+- Dispatch frames to models (future phases)
 
 Stream Agent MUST NEVER:
 - Store frames
@@ -134,55 +136,71 @@ Stream Agent MUST NEVER:
 - Control video pipelines
 
 ===============================
-PHASE 3.2 – SUBSCRIPTION MODEL & FRAME BINDING (ACTIVE)
+PHASE 3.3 – FPS SCHEDULING & FRAME SELECTION (ACTIVE)
 ===============================
 
-Phase 3.2 introduces **subscription state only**.
+Phase 3.3 introduces **decision-only frame gating**.
 
 GOAL:
-- Represent which models are attached to which camera
-- Bind Stream Agent to a frame source (read-only)
-- Prepare for future scheduling without implementing it
+- Decide whether a frame SHOULD be dispatched to a subscription
+- Enforce FPS as a **maximum**, never a target
+- Allow unlimited frame drops
+
+This phase ends at **dispatch eligibility decision**.
 
 ----------------
 WHAT TO IMPLEMENT
 ----------------
 
-- Subscription data model
-- Add/remove subscription operations (pure state mutation)
-- Logical frame source reference (identifier/path only)
+- Per-subscription FPS gating logic
+- Frame eligibility checks using:
+  - last_dispatched_timestamp OR
+  - last_dispatched_frame_id
+- Stateless or minimal per-subscription bookkeeping
+- Pure decision logic (allow / skip)
 
 ----------------
 WHAT NOT TO IMPLEMENT
 ----------------
 
 - Frame reads
-- FPS enforcement
-- Scheduling loops
-- Timers or sleeps
-- Background threads or async tasks
-- IPC or shared memory access
+- Shared memory access
+- Timers, sleeps, or scheduling loops
+- Queues or buffers
+- Background threads or async workers
+- Frame dispatch
 - Model execution
 - Error retries or recovery
 - Persistence
 
 ----------------
-SUBSCRIPTION RULES
+FPS ENFORCEMENT RULES
 ----------------
 
-- Subscription identity: (camera_id, model_id)
-- Multiple models per camera allowed
-- Add/remove is immediate and non-blocking
-- No draining or graceful shutdown
-- In-flight work (future phases) may be dropped
+- FPS is a MAXIMUM, not a guarantee
+- Frames may be skipped freely
+- No catch-up behavior
+- No token buckets
+- No fairness logic
+- No time-based sleeps
 
 ----------------
-FRAME SOURCE BINDING RULES
+FRAME SELECTION RULES
 ----------------
 
-- Stream Agent may store identifiers or paths only
-- MUST NOT open, read, or watch shared memory
-- MUST NOT react to frame availability
+- Each subscription is evaluated independently
+- A frame allowed for one model may be skipped for another
+- Decisions are instantaneous and non-blocking
+- Dropping frames is expected and correct
+
+----------------
+FAILURE & ISOLATION RULES
+----------------
+
+- Scheduler failure affects only that subscription
+- Stream Agent failure affects only that camera
+- Ruth AI Core failure does NOT affect VAS
+- No retries, restarts, or recovery coordination
 
 If unsure, **STOP and ASK**.
 
@@ -215,11 +233,12 @@ Phase 2 remains valid ONLY IF:
 - VAS remains sole writer
 - Reader failure does not affect VAS
 
-Phase 3.2 is complete ONLY IF:
-- Subscriptions are represented as pure state
+Phase 3.3 is complete ONLY IF:
+- FPS gating exists as pure decision logic
+- Frames are skipped without side effects
+- No scheduling loops or timers exist
 - No frame access occurs
-- No scheduling logic exists
-- No execution side effects occur
+- No dispatch or execution occurs
 
 ===============================
 OUTPUT EXPECTATION

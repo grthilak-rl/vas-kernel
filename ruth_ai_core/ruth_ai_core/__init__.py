@@ -3,6 +3,7 @@ Ruth AI Core Service
 
 Phase 3.1 – Stream Agent Internal State Model
 Phase 3.2 – Subscription Model & Frame Binding
+Phase 3.3 – FPS Scheduling & Frame Selection
 
 This package defines the core abstractions for Ruth AI Core,
 an independent AI orchestration service that consumes frames
@@ -15,14 +16,19 @@ PHASE 3.1 EXPORTS:
 PHASE 3.2 EXPORTS:
 - Subscription: Subscription data model
 
-PHASE 3.2 CONSTRAINTS:
-- No execution logic
+PHASE 3.3 EXPORTS:
+- StreamAgent.should_dispatch: FPS gating decision logic
+- StreamAgent.record_dispatch: Dispatch state update
+
+PHASE 3.3 CONSTRAINTS:
+- Pure decision logic only
+- No execution
 - No integration with VAS Kernel
 - No frame processing
-- No scheduling
+- No frame dispatch
 - No networking
 
-This is state modeling only.
+This is decision logic only, not execution.
 """
 
 from .agent import StreamAgent
@@ -35,4 +41,4 @@ __all__ = [
     "Subscription",
 ]
 
-__version__ = "0.2.0-phase3.2"
+__version__ = "0.3.0-phase3.3"

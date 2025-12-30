@@ -1,6 +1,7 @@
 """
 Phase 3.1 – Stream Agent Internal State Model
 Phase 3.2 – Subscription Model & Frame Binding
+Phase 3.3 – FPS Scheduling & Frame Selection
 
 This module defines the StreamAgent abstraction.
 
@@ -14,6 +15,11 @@ PHASE 3.2 SCOPE:
 - Subscription management (add/remove/list)
 - Logical frame source binding (camera_id reference only)
 - No frame reads, no scheduling, no execution
+
+PHASE 3.3 SCOPE:
+- FPS gating decision logic (pure computation)
+- Per-subscription frame selection (ALLOW or SKIP)
+- No frame access, no dispatch execution, no loops
 
 WHAT THIS IS NOT:
 - Not a thread or process
@@ -55,6 +61,10 @@ class StreamAgent:
     PHASE 3.2 ADDITIONS:
     - Subscription management (pure state only)
     - Logical frame source binding (reference only)
+
+    PHASE 3.3 ADDITIONS:
+    - FPS gating decision logic (should_dispatch)
+    - Per-subscription frame selection
     """
 
     def __init__(self, camera_id: str, frame_source_path: Optional[str] = None):
@@ -236,6 +246,108 @@ class StreamAgent:
     def subscription_count(self) -> int:
         """Number of active subscriptions."""
         return len(self._subscriptions)
+
+    def should_dispatch(
+        self,
+        subscription: Subscription,
+        frame_id: int,
+        frame_timestamp: datetime
+    ) -> bool:
+        """
+        Phase 3.3: FPS gating decision logic.
+
+        Determines whether a frame should be dispatched to a subscription
+        based on the subscription's desired_fps constraint.
+
+        This is PURE DECISION LOGIC ONLY:
+        - No frame access
+        - No frame dispatch
+        - No side effects
+        - No state mutation
+
+        FPS ENFORCEMENT RULES:
+        - desired_fps is a MAXIMUM (cap, not target)
+        - Frames may be skipped freely
+        - No catch-up behavior
+        - No token buckets
+        - No queues
+
+        DECISION ALGORITHM:
+        1. If subscription is inactive → SKIP
+        2. If desired_fps not configured → ALLOW (unlimited)
+        3. If this is the first frame → ALLOW
+        4. If sufficient time has elapsed since last dispatch → ALLOW
+        5. Otherwise → SKIP
+
+        Args:
+            subscription: The subscription to evaluate
+            frame_id: Current frame identifier (monotonic)
+            frame_timestamp: Current frame timestamp
+
+        Returns:
+            True if frame should be dispatched (ALLOW)
+            False if frame should be skipped (SKIP)
+
+        Note:
+            This method does NOT update subscription state.
+            Caller must call record_dispatch() if dispatch succeeds.
+        """
+        # Fail-closed: inactive subscriptions never receive frames
+        if not subscription.active:
+            return False
+
+        # Get desired_fps from config (default: None = unlimited)
+        desired_fps = subscription.config.get("desired_fps")
+
+        # If no FPS limit configured, allow all frames
+        if desired_fps is None:
+            return True
+
+        # Validate desired_fps (fail-closed on invalid config)
+        if not isinstance(desired_fps, (int, float)) or desired_fps <= 0:
+            return False
+
+        # First frame for this subscription → always allow
+        if subscription.last_dispatch_timestamp is None:
+            return True
+
+        # Calculate minimum interval between frames (in seconds)
+        # desired_fps = frames per second
+        # min_interval = 1 / desired_fps
+        min_interval_seconds = 1.0 / float(desired_fps)
+
+        # Calculate time elapsed since last dispatch
+        elapsed = (frame_timestamp - subscription.last_dispatch_timestamp).total_seconds()
+
+        # Allow dispatch if sufficient time has elapsed
+        # Use >= to handle edge cases with exact timing
+        return elapsed >= min_interval_seconds
+
+    def record_dispatch(
+        self,
+        subscription: Subscription,
+        frame_id: int,
+        frame_timestamp: datetime
+    ) -> None:
+        """
+        Phase 3.3: Record that a frame was dispatched to a subscription.
+
+        This method updates the subscription's dispatch state after a
+        successful dispatch decision.
+
+        IMPORTANT:
+        - This is a STATE UPDATE ONLY
+        - No frame access
+        - No actual dispatch execution
+        - Caller is responsible for actual dispatch (Phase 3.4+)
+
+        Args:
+            subscription: The subscription that received the frame
+            frame_id: The dispatched frame identifier
+            frame_timestamp: The dispatched frame timestamp
+        """
+        subscription.last_dispatched_frame_id = frame_id
+        subscription.last_dispatch_timestamp = frame_timestamp
 
     def __repr__(self) -> str:
         """String representation for debugging."""
