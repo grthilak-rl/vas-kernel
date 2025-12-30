@@ -1,5 +1,6 @@
 """
 Phase 3.1 – Stream Agent Internal State Model
+Phase 3.2 – Subscription Model & Frame Binding
 
 This module defines the StreamAgent abstraction.
 
@@ -9,6 +10,11 @@ PHASE 3.1 SCOPE:
 - No execution logic, no side effects
 - No frame access, no scheduling, no routing
 
+PHASE 3.2 SCOPE:
+- Subscription management (add/remove/list)
+- Logical frame source binding (camera_id reference only)
+- No frame reads, no scheduling, no execution
+
 WHAT THIS IS NOT:
 - Not a thread or process
 - Not a background worker
@@ -17,8 +23,9 @@ WHAT THIS IS NOT:
 """
 
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
+from .subscription import Subscription
 from .types import AgentState
 
 
@@ -40,27 +47,32 @@ class StreamAgent:
     CONSTRAINTS:
     - No frame storage
     - No frame processing
-    - No scheduling logic
+    - No scheduling logic (Phase 3.3)
     - No model execution
     - No I/O or network calls
     - No side effects
 
-    This is Phase 3.1 only. Subscriptions are placeholders.
-    Frame routing and FPS scheduling belong to later phases.
+    PHASE 3.2 ADDITIONS:
+    - Subscription management (pure state only)
+    - Logical frame source binding (reference only)
     """
 
-    def __init__(self, camera_id: str):
+    def __init__(self, camera_id: str, frame_source_path: Optional[str] = None):
         """
         Initialize a StreamAgent for the given camera.
 
         Args:
             camera_id: Unique identifier for the camera stream.
                       stream_agent_id == camera_id by design.
+            frame_source_path: Optional logical path to frame export source.
+                              This is a reference only - NO frame access occurs.
+                              Example: "/dev/shm/vas_frames_camera_1" (Phase 2 export path)
 
         State after construction:
             - state = CREATED
-            - subscriptions = empty list (placeholder)
+            - subscriptions = empty dict
             - created_at = current timestamp
+            - frame_source_path = logical reference (if provided)
         """
         # Core identity: stream_agent_id == camera_id
         self.camera_id: str = camera_id
@@ -68,9 +80,14 @@ class StreamAgent:
         # Lifecycle state
         self.state: AgentState = AgentState.CREATED
 
-        # Subscription placeholder (empty for Phase 3.1)
-        # Phase 3.2 will define subscription structure
-        self.subscriptions: List = []
+        # Phase 3.2: Logical frame source binding
+        # This is a REFERENCE ONLY - no file access, no memory mapping
+        # Future phases will use this to know where frames come from
+        self.frame_source_path: Optional[str] = frame_source_path
+
+        # Phase 3.2: Subscription storage
+        # Dict[model_id, Subscription] for O(1) lookup
+        self._subscriptions: Dict[str, Subscription] = {}
 
         # Inert metadata (no logic attached)
         self.created_at: datetime = datetime.utcnow()
@@ -130,10 +147,101 @@ class StreamAgent:
         self.state = AgentState.STOPPED
         self.stopped_at = datetime.utcnow()
 
+    def add_subscription(self, model_id: str, config: Optional[Dict[str, Any]] = None) -> Subscription:
+        """
+        Add a model subscription to this camera stream.
+
+        Phase 3.2: Pure state management only.
+        This method does NOT:
+        - Start model execution
+        - Allocate resources
+        - Open connections
+        - Begin frame dispatch
+
+        Args:
+            model_id: Unique identifier for the AI model
+            config: Optional configuration dict (e.g., desired_fps for Phase 3.3)
+
+        Returns:
+            The created Subscription object
+
+        Raises:
+            ValueError: If model_id is empty or subscription already exists
+        """
+        if not model_id:
+            raise ValueError("model_id must be non-empty")
+
+        if model_id in self._subscriptions:
+            raise ValueError(
+                f"Subscription for model_id={model_id!r} already exists on camera {self.camera_id!r}"
+            )
+
+        # Create subscription (pure state, no side effects)
+        subscription = Subscription(
+            model_id=model_id,
+            config=config or {}
+        )
+
+        # Store in subscriptions dict
+        self._subscriptions[model_id] = subscription
+
+        return subscription
+
+    def remove_subscription(self, model_id: str) -> None:
+        """
+        Remove a model subscription from this camera stream.
+
+        Phase 3.2: Immediate removal, no draining.
+        This method does NOT:
+        - Wait for in-flight work
+        - Stop model execution (models managed externally)
+        - Clean up resources (there are none in Phase 3.2)
+
+        Args:
+            model_id: Unique identifier for the AI model
+
+        Raises:
+            KeyError: If subscription does not exist
+        """
+        if model_id not in self._subscriptions:
+            raise KeyError(
+                f"No subscription for model_id={model_id!r} on camera {self.camera_id!r}"
+            )
+
+        # Remove subscription (immediate, no draining)
+        del self._subscriptions[model_id]
+
+    def list_subscriptions(self) -> List[Subscription]:
+        """
+        List all active subscriptions for this camera.
+
+        Returns:
+            List of Subscription objects (read-only view)
+        """
+        return list(self._subscriptions.values())
+
+    def get_subscription(self, model_id: str) -> Optional[Subscription]:
+        """
+        Get a specific subscription by model_id.
+
+        Args:
+            model_id: Unique identifier for the AI model
+
+        Returns:
+            Subscription object if found, None otherwise
+        """
+        return self._subscriptions.get(model_id)
+
+    @property
+    def subscription_count(self) -> int:
+        """Number of active subscriptions."""
+        return len(self._subscriptions)
+
     def __repr__(self) -> str:
         """String representation for debugging."""
         return (
             f"StreamAgent(camera_id={self.camera_id!r}, "
             f"state={self.state.value}, "
-            f"subscriptions={len(self.subscriptions)})"
+            f"subscriptions={self.subscription_count}, "
+            f"frame_source={self.frame_source_path!r})"
         )

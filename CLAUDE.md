@@ -3,7 +3,7 @@ You are implementing **VAS Kernel Phases** incrementally.
 VAS is a **frozen reference implementation**.  
 All existing behavior is correct and non-negotiable.
 
-The **current active phase MUST be explicitly stated in the prompt**.  
+The **current ACTIVE phase MUST be explicitly stated in the prompt**.  
 Only the ACTIVE phase may be implemented.
 
 If unsure, **STOP and ASK**.
@@ -31,10 +31,11 @@ PHASE STATUS (AUTHORITATIVE)
 
 Phase 1 – Frame Ring Buffer: **COMPLETED**  
 Phase 2 – Frame Export Interface: **COMPLETED**  
-Phase 3 – Ruth AI Core Service: **DESIGN ONLY (NO CODE)**
+Phase 3.1 – Stream Agent Internal State Model: **COMPLETED**  
+Phase 3.2 – Subscription Model & Frame Binding: **ACTIVE**
 
 Only phases marked **ACTIVE** may be implemented.  
-Phase 3 is design-only until explicitly activated.
+All other phases are frozen and must not be modified.
 
 ===============================
 FEATURE FLAGS (MANDATORY)
@@ -94,16 +95,16 @@ Scope is STRICTLY limited to:
 - local-host only visibility
 
 ===============================
-PHASE 3 – RUTH AI CORE SERVICE (DESIGN ONLY)
+PHASE 3 – RUTH AI CORE SERVICE (DESIGN OVERVIEW)
 ===============================
 
 Phase 3 introduces **Ruth AI Core**, a control-plane orchestration service.
 
 PHASE 3 IS:
 - Camera ↔ model orchestration
-- Per-model FPS enforcement
-- Frame routing to model containers
-- Metadata event generation
+- Per-model FPS enforcement (future)
+- Frame routing to model containers (future)
+- Metadata event generation (future)
 
 PHASE 3 IS NOT:
 - Video pipeline
@@ -121,55 +122,69 @@ PHASE 3 CORE ABSTRACTION: STREAM AGENT
 - stream_agent_id == camera_id
 - Logical entity (NOT a worker, thread, or process)
 
-Stream Agent responsibilities:
-- Attach to Phase 2 frame export
+Stream Agent responsibilities (cumulative across Phase 3):
 - Maintain model subscriptions
-- Enforce per-model FPS limits
-- Dispatch frames to models
-- Collect inference results
+- Bind to frame export (read-only)
+- Enforce per-model FPS limits (Phase 3.3+)
+- Dispatch frames to models (Phase 3.3+)
 
 Stream Agent MUST NEVER:
 - Store frames
 - Buffer frames
-- Retry inference
 - Control video pipelines
 
 ===============================
-PHASE 3 SUBSCRIPTION RULES
+PHASE 3.2 – SUBSCRIPTION MODEL & FRAME BINDING (ACTIVE)
 ===============================
 
-- Subscriptions identified by (camera_id, model_id)
+Phase 3.2 introduces **subscription state only**.
+
+GOAL:
+- Represent which models are attached to which camera
+- Bind Stream Agent to a frame source (read-only)
+- Prepare for future scheduling without implementing it
+
+----------------
+WHAT TO IMPLEMENT
+----------------
+
+- Subscription data model
+- Add/remove subscription operations (pure state mutation)
+- Logical frame source reference (identifier/path only)
+
+----------------
+WHAT NOT TO IMPLEMENT
+----------------
+
+- Frame reads
+- FPS enforcement
+- Scheduling loops
+- Timers or sleeps
+- Background threads or async tasks
+- IPC or shared memory access
+- Model execution
+- Error retries or recovery
+- Persistence
+
+----------------
+SUBSCRIPTION RULES
+----------------
+
+- Subscription identity: (camera_id, model_id)
 - Multiple models per camera allowed
 - Add/remove is immediate and non-blocking
 - No draining or graceful shutdown
-- In-flight results may be dropped
+- In-flight work (future phases) may be dropped
 
-===============================
-PHASE 3 FPS SCHEDULING RULES
-===============================
+----------------
+FRAME SOURCE BINDING RULES
+----------------
 
-- Scheduling is per subscription
-- desired_fps is a MAXIMUM, not a guarantee
-- Frames may be skipped freely
-- No catch-up logic
-- No token buckets
-- No queues
-- No timing sleeps
+- Stream Agent may store identifiers or paths only
+- MUST NOT open, read, or watch shared memory
+- MUST NOT react to frame availability
 
-===============================
-PHASE 3 FAILURE & ISOLATION RULES
-===============================
-
-- Ruth AI Core crash → VAS unaffected
-- Stream Agent crash → only that camera affected
-- Model crash → only that subscription affected
-- Frame export loss → Stream Agent idles
-
-The system must NOT:
-- Retry failed inferences
-- Restart models automatically
-- Buffer frames for recovery
-- Coordinate restarts
+If unsure, **STOP and ASK**.
 
 ===============================
 WHAT NOT TO IMPLEMENT (GLOBAL)
@@ -200,9 +215,11 @@ Phase 2 remains valid ONLY IF:
 - VAS remains sole writer
 - Reader failure does not affect VAS
 
-Phase 3 may proceed to implementation ONLY IF:
-- Explicitly activated
-- Canonical Phase 3 design document is followed exactly
+Phase 3.2 is complete ONLY IF:
+- Subscriptions are represented as pure state
+- No frame access occurs
+- No scheduling logic exists
+- No execution side effects occur
 
 ===============================
 OUTPUT EXPECTATION
@@ -211,6 +228,6 @@ OUTPUT EXPECTATION
 - Minimal, surgical diffs
 - Fully reversible changes
 - Well-commented where correctness is critical
-- No behavior changes outside the active phase
+- No behavior changes outside the ACTIVE phase
 
 If any change risks violating these constraints, **STOP and ASK** before proceeding.
