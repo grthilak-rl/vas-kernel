@@ -34,7 +34,8 @@ Phase 2 – Frame Export Interface: **COMPLETED**
 Phase 3.1 – Stream Agent Internal State Model: **COMPLETED**  
 Phase 3.2 – Subscription Model & Frame Binding: **COMPLETED**  
 Phase 3.3 – FPS Scheduling & Frame Selection: **COMPLETED**  
-Phase 3.4 – Failure & Restart Semantics: **ACTIVE**
+Phase 3.4 – Failure & Restart Semantics: **COMPLETED**  
+Phase 4.1 – AI Model IPC & Inference Contract: **ACTIVE**
 
 Only phases marked **ACTIVE** may be implemented.  
 All other phases are frozen and must not be modified.
@@ -97,157 +98,181 @@ Scope is STRICTLY limited to:
 - local-host only visibility
 
 ===============================
-PHASE 3 – RUTH AI CORE SERVICE (DESIGN OVERVIEW)
+PHASE 3 – RUTH AI CORE SERVICE (COMPLETED)
 ===============================
 
-Phase 3 introduces **Ruth AI Core**, a control-plane orchestration service.
+Phase 3 introduced **Ruth AI Core**, a control-plane orchestration service.
 
-PHASE 3 IS:
-- Camera ↔ model orchestration
-- Per-model FPS enforcement
-- Frame routing to model runtimes
-- Metadata event generation
+Phase 3 delivered:
+- Stream Agent abstraction
+- Subscription model
+- FPS gating decision logic
+- Failure isolation semantics
 
-PHASE 3 IS NOT:
+Phase 3 is now **FROZEN**.
+
+===============================
+PHASE 4 – AI MODEL RUNTIME (OVERVIEW)
+===============================
+
+Phase 4 introduces **AI Model Containers** as independent, long-lived runtimes.
+
+PHASE 4 IS:
+- Model inference runtime
+- GPU-resident, long-lived containers
+- Stateless per inference request
+- Shared across multiple cameras
+
+PHASE 4 IS NOT:
 - Video pipeline
 - Decoder
-- MediaSoup participant
 - RTSP / WebRTC controller
-- AI model runtime
-- GPU scheduler
+- Camera-specific container lifecycle
+- Model orchestration logic (handled by Ruth AI Core)
 
 ===============================
-PHASE 3 CORE ABSTRACTION: STREAM AGENT
+PHASE 4.1 – IPC & INFERENCE CONTRACT (ACTIVE)
 ===============================
 
-- Exactly **one Stream Agent per camera**
-- stream_agent_id == camera_id
-- Logical entity (NOT a worker, thread, or process)
+Phase 4.1 defines the **hard boundary contract** between:
+- Ruth AI Core (caller)
+- AI Model Containers (callees)
 
-Stream Agent responsibilities (cumulative across Phase 3):
-- Maintain model subscriptions
-- Bind to frame export (read-only)
-- Select frames per subscription
-- Enforce per-model FPS limits
-- Handle failure isolation semantics
-- Dispatch frames to models (Phase 4+)
-
-Stream Agent MUST NEVER:
-- Store frames
-- Buffer frames
-- Control video pipelines
-
-===============================
-PHASE 3.4 – FAILURE & RESTART SEMANTICS (ACTIVE)
-===============================
-
-Phase 3.4 defines **strict failure isolation rules only**.
-
-GOAL:
-- Explicitly define what happens when components fail
-- Ensure failures NEVER cascade across boundaries
-- Encode failure behavior as **design invariants**, not recovery logic
-
-This phase introduces **NO execution, NO retries, NO recovery**.
+This phase is **DESIGN + INTERFACE IMPLEMENTATION ONLY**.
 
 ----------------
-FAILURE DOMAINS
+CONTAINER CARDINALITY
 ----------------
 
-Failures are isolated by domain:
-
-- VAS Kernel
-- Frame Export Interface
-- Ruth AI Core (global)
-- Stream Agent (per camera)
-- Subscription / Model (per model)
-
-Each domain MUST fail independently.
+- Exactly **one container per model type**
+- Containers are NOT per camera
+- Containers are long-lived and pre-loaded
+- Containers serve multiple cameras concurrently
 
 ----------------
-FAILURE RULES (MANDATORY)
+CONCURRENCY RULES
 ----------------
 
-- VAS failure → outside Phase 3 scope
-- Frame export loss → Stream Agent idles silently
-- Ruth AI Core crash → VAS is completely unaffected
-- Stream Agent crash → affects only that camera
-- Model failure → affects only that subscription
+- Containers MUST treat each inference request independently
+- Containers MAY process requests concurrently
+- Containers MUST NOT assume ordered delivery
+- Containers MUST NOT rely on request sequencing
+- Containers MUST NOT share mutable state across requests
+
+Concurrency is an implementation detail of the container and must not
+leak into the IPC contract.
 
 ----------------
-FORBIDDEN FAILURE BEHAVIOR
+IPC REQUIREMENTS (MANDATORY)
 ----------------
 
-The system MUST NOT:
+Each AI model container MUST:
 
-- Retry inference
-- Restart models
-- Buffer frames for recovery
-- Coordinate restarts across components
-- Attempt graceful draining
-- Persist failure state
-- Emit alerts or notifications
-- Perform health-based control decisions
+- Expose exactly **one Unix Domain Socket (UDS) endpoint**
+- Accept inference requests via this endpoint
+- Return inference results synchronously
+- Remain stateless per request
+- Perform NO frame storage or buffering
 
 ----------------
-ALLOWED BEHAVIOR
+INFERENCE REQUEST CONTRACT
 ----------------
 
-- Silent frame drops
-- Stateless idling
-- Lossy behavior
-- Best-effort continuation
+Requests MUST include:
+- frame reference (path or handle, not raw bytes)
+- frame metadata
+- camera_id
+- model_id
+- timestamp
 
-If something fails, it is simply **skipped**.
+Containers MUST NOT:
+- Decode video
+- Track per-camera state
+- Maintain temporal context
+- Perform FPS enforcement
 
 ----------------
-WHAT TO IMPLEMENT
+INFERENCE RESPONSE CONTRACT
 ----------------
 
-- Explicit failure semantics documentation
-- Defensive coding (fail-closed decisions)
-- No-op behavior on failure paths
-- Clear separation of failure domains
+Responses MUST include:
+- model_id
+- camera_id
+- frame_id or timestamp
+- detections (model-defined schema)
+- optional confidence scores
+
+----------------
+FRAME MEMORY RULES
+----------------
+
+- Frame references are READ-ONLY
+- Containers MUST NOT mutate shared memory
+- Containers MUST NOT retain frame references beyond request scope
+- Containers MUST assume frames may disappear immediately after response
+
+Containers have NO ownership of frame memory.
+
+----------------
+REQUEST LIFECYCLE RULES
+----------------
+
+- Exactly ONE request produces exactly ONE response
+- No streaming responses
+- No partial results
+- No callbacks or async continuations
+- No out-of-band signaling
+
+Inference is strictly synchronous at the IPC boundary.
+
+----------------
+FORBIDDEN BEHAVIOR
+----------------
+
+Model containers MUST NOT:
+
+- Access RTSP streams
+- Access MediaSoup
+- Read shared memory directly unless instructed
+- Retry failed inference
+- Queue frames
+- Spawn per-camera workers
+- Control GPU scheduling beyond their process
+
+----------------
+WHAT TO IMPLEMENT (PHASE 4.1 ONLY)
+----------------
+
+- IPC interface definition
+- Request/response schema
+- Container-side server skeleton
+- Strict stateless inference handler
+- Clear documentation of contract
 
 ----------------
 WHAT NOT TO IMPLEMENT
 ----------------
 
-- Recovery logic
-- Supervisors
-- Watchdogs
-- Health checks
-- Circuit breakers
-- Backoff logic
-- Metrics or alerts
+- Model onboarding (Phase 4.2)
+- GPU scheduling logic
+- Model lifecycle management
+- Container discovery
+- Health checks or heartbeats
+- Frontend integration
 - Persistence
 
 If unsure, **STOP and ASK**.
 
 ===============================
-WHAT NOT TO IMPLEMENT (GLOBAL)
-===============================
-
-- AI inference engines
-- Model containers (Phase 4)
-- Model lifecycle management
-- GPU work
-- Persistent storage
-- Frontend overlays
-- Alerts or notifications
-- Network APIs
-- Multi-host support
-
-===============================
 SUCCESS CRITERIA
 ===============================
 
-Phase 3.4 is complete ONLY IF:
-- Failure behavior is explicitly defined
-- Failures do not cascade
-- No retries or recovery logic exists
-- Ruth AI Core failure never impacts VAS
-- Stream Agent failure scope is limited to one camera
+Phase 4.1 is complete ONLY IF:
+- IPC contract is explicit and enforced
+- Containers are stateless per request
+- One container serves many cameras
+- No coupling to VAS internals exists
+- No scheduling or orchestration logic leaks into containers
 
 ===============================
 OUTPUT EXPECTATION
