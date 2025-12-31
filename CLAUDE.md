@@ -35,7 +35,8 @@ Phase 3.1 – Stream Agent Internal State Model: **COMPLETED**
 Phase 3.2 – Subscription Model & Frame Binding: **COMPLETED**  
 Phase 3.3 – FPS Scheduling & Frame Selection: **COMPLETED**  
 Phase 3.4 – Failure & Restart Semantics: **COMPLETED**  
-Phase 4.1 – AI Model IPC & Inference Contract: **ACTIVE**
+Phase 4.1 – AI Model IPC & Inference Contract: **COMPLETED**  
+Phase 4.2 – AI Model Runtime & Onboarding: **ACTIVE**
 
 Only phases marked **ACTIVE** may be implemented.  
 All other phases are frozen and must not be modified.
@@ -119,7 +120,7 @@ Phase 4 introduces **AI Model Containers** as independent, long-lived runtimes.
 
 PHASE 4 IS:
 - Model inference runtime
-- GPU-resident, long-lived containers
+- GPU-backed, long-lived containers
 - Stateless per inference request
 - Shared across multiple cameras
 
@@ -131,148 +132,203 @@ PHASE 4 IS NOT:
 - Model orchestration logic (handled by Ruth AI Core)
 
 ===============================
-PHASE 4.1 – IPC & INFERENCE CONTRACT (ACTIVE)
+PHASE 4.2 – AI MODEL RUNTIME & ONBOARDING (ACTIVE)
 ===============================
 
-Phase 4.1 defines the **hard boundary contract** between:
-- Ruth AI Core (caller)
-- AI Model Containers (callees)
+Phase 4.2 introduces **real AI model execution** while preserving all guarantees from Phases 1–4.1.
 
-This phase is **DESIGN + INTERFACE IMPLEMENTATION ONLY**.
+This phase answers ONE question only:
+
+**How are GPU-backed AI models safely loaded, executed, and operated as long-lived containers without impacting VAS or Ruth AI Core stability?**
+
+The Phase 4.1 IPC contract is **LOCKED** and MUST NOT be changed.
 
 ----------------
-CONTAINER CARDINALITY
+WHAT PHASE 4.2 IS
 ----------------
 
+- GPU-backed AI inference runtime
+- Long-lived containers (one per model type)
+- Real model loading (PyTorch / ONNX / TensorRT)
+- Stateless per-request inference execution
+- Concurrent inference across multiple cameras
+- Strict adherence to Phase 4.1 IPC contract
+
+----------------
+WHAT PHASE 4.2 IS NOT
+----------------
+
+- Video decoding
+- Frame scheduling or FPS enforcement
+- Camera-aware logic
+- Model orchestration (handled by Ruth AI Core)
+- UI-facing logic
+- Persistence layer
+- Alerts, metrics, or monitoring
+
+----------------
+CONTAINER LIFECYCLE MODEL
+----------------
+
+Cardinality:
 - Exactly **one container per model type**
-- Containers are NOT per camera
-- Containers are long-lived and pre-loaded
-- Containers serve multiple cameras concurrently
+- Containers are long-lived
+- Containers are pre-started, not on-demand
+
+Startup sequence:
+1. Container starts
+2. Model weights loaded into memory
+3. GPU context initialized (if available)
+4. IPC server starts listening
+5. Container becomes READY
+
+Model loading happens **once at startup**.
 
 ----------------
-CONCURRENCY RULES
+MODEL EXECUTION MODEL
 ----------------
 
-- Containers MUST treat each inference request independently
-- Containers MAY process requests concurrently
-- Containers MUST NOT assume ordered delivery
-- Containers MUST NOT rely on request sequencing
-- Containers MUST NOT share mutable state across requests
+For each inference request:
+1. Validate IPC request
+2. Read frame from shared memory (READ-ONLY)
+3. Preprocess frame
+4. Run inference (GPU or CPU fallback)
+5. Post-process results
+6. Return response
 
-Concurrency is an implementation detail of the container and must not
-leak into the IPC contract.
-
-----------------
-IPC REQUIREMENTS (MANDATORY)
-----------------
-
-Each AI model container MUST:
-
-- Expose exactly **one Unix Domain Socket (UDS) endpoint**
-- Accept inference requests via this endpoint
-- Return inference results synchronously
-- Remain stateless per request
-- Perform NO frame storage or buffering
+Each request is independent.
 
 ----------------
-INFERENCE REQUEST CONTRACT
+GPU USAGE RULES
 ----------------
 
-Requests MUST include:
-- frame reference (path or handle, not raw bytes)
-- frame metadata
-- camera_id
+- GPU memory allocated once at startup
+- No per-request GPU initialization
+- No GPU memory growth over time
+- Models MUST tolerate dropped frames
+- Inference latency variability is acceptable
+- No global GPU scheduler introduced
+
+----------------
+GPU ABSENCE SEMANTICS (LOCKED)
+----------------
+
+If NO GPU is available at container startup:
+
+- Container MUST still start
+- Container MUST load model in CPU mode OR stub mode
+- IPC server MUST still accept requests
+- Requests MUST return valid error responses or degraded results
+- Container MUST NOT crash or block
+
+GPU absence:
+- Does NOT affect VAS
+- Does NOT affect Ruth AI Core
+- Does NOT prevent model discovery
+- Is NOT treated as a fatal error
+
+----------------
+CONCURRENCY MODEL
+----------------
+
+- Containers MAY process multiple requests concurrently
+- Threading or async model is container-internal
+- No shared mutable state between requests
+- Model inference MUST be thread-safe or internally protected
+- Concurrency is opaque to Ruth AI Core
+
+----------------
+FAILURE SEMANTICS (INHERITED)
+----------------
+
+Phase 4.2 strictly inherits Phase 3.4 failure semantics:
+
+- Model crash → only that model unavailable
+- Container crash → no effect on VAS
+- GPU failure → container fails, others unaffected
+- Bad frame → request fails, no retries
+
+No recovery logic is added in this phase.
+
+----------------
+MODEL ONBOARDING (DEVELOPER EXPERIENCE)
+----------------
+
+A standard model template repository defines:
+- Directory structure
+- Entry points
+- IPC wiring
+- Inference handler skeleton
+
+Junior AI engineers work **only** inside the template.
+
+----------------
+MODEL.YAML (SINGLE SOURCE OF TRUTH)
+----------------
+
+Each model includes a `model.yaml` defining:
 - model_id
-- timestamp
+- model_name
+- model_version
+- supported_tasks
+- input_format (e.g., NV12)
+- expected_resolution
+- resource_requirements (GPU memory hints)
+- output_schema
 
-Containers MUST NOT:
-- Decode video
-- Track per-camera state
-- Maintain temporal context
-- Perform FPS enforcement
-
-----------------
-INFERENCE RESPONSE CONTRACT
-----------------
-
-Responses MUST include:
-- model_id
-- camera_id
-- frame_id or timestamp
-- detections (model-defined schema)
-- optional confidence scores
+No VAS or Ruth AI Core code changes are required.
 
 ----------------
-FRAME MEMORY RULES
+MODEL DISCOVERY
 ----------------
 
-- Frame references are READ-ONLY
-- Containers MUST NOT mutate shared memory
-- Containers MUST NOT retain frame references beyond request scope
-- Containers MUST assume frames may disappear immediately after response
+- Models discovered via filesystem scan
+- Example path:
 
-Containers have NO ownership of frame memory.
+/opt/ruth-ai/models/
+  ├── yolov8/
+  │   ├── model.yaml
+  │   ├── container_image
+  │   └── weights/
+  └── pose_estimation/
 
-----------------
-REQUEST LIFECYCLE RULES
-----------------
-
-- Exactly ONE request produces exactly ONE response
-- No streaming responses
-- No partial results
-- No callbacks or async continuations
-- No out-of-band signaling
-
-Inference is strictly synchronous at the IPC boundary.
+Discovery is **startup-time only** in Phase 4.2.
 
 ----------------
-FORBIDDEN BEHAVIOR
+SECURITY & ISOLATION
 ----------------
 
-Model containers MUST NOT:
-
-- Access RTSP streams
-- Access MediaSoup
-- Read shared memory directly unless instructed
-- Retry failed inference
-- Queue frames
-- Spawn per-camera workers
-- Control GPU scheduling beyond their process
+- Containers run as non-root
+- Minimal filesystem access
+- Read-only access to shared memory
+- No network exposure beyond IPC
 
 ----------------
-WHAT TO IMPLEMENT (PHASE 4.1 ONLY)
+PHASE BOUNDARIES
 ----------------
 
-- IPC interface definition
-- Request/response schema
-- Container-side server skeleton
-- Strict stateless inference handler
-- Clear documentation of contract
+Phase 4.2 ends at **successful inference execution**.
 
-----------------
-WHAT NOT TO IMPLEMENT
-----------------
+Explicitly excluded:
+- Model hot-reload
+- Canary deployments
+- Metrics & monitoring
+- Auto-scaling
+- Multi-host GPU sharing
 
-- Model onboarding (Phase 4.2)
-- GPU scheduling logic
-- Model lifecycle management
-- Container discovery
-- Health checks or heartbeats
-- Frontend integration
-- Persistence
-
-If unsure, **STOP and ASK**.
+These belong to later phases.
 
 ===============================
 SUCCESS CRITERIA
 ===============================
 
-Phase 4.1 is complete ONLY IF:
-- IPC contract is explicit and enforced
-- Containers are stateless per request
-- One container serves many cameras
-- No coupling to VAS internals exists
-- No scheduling or orchestration logic leaks into containers
+Phase 4.2 is complete ONLY IF:
+- Real models run using Phase 4.1 IPC
+- GPU memory remains stable over time
+- Multiple cameras share one model container
+- Model onboarding requires no VAS changes
+- Failures remain isolated
+- GPU absence is handled gracefully
 
 ===============================
 OUTPUT EXPECTATION
