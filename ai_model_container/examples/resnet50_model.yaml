@@ -1,0 +1,54 @@
+# ResNet-50 - Image Classification Model
+# Phase 4.2.3 Model Configuration Template
+
+# REQUIRED: Model Identity
+model_id: resnet50
+model_name: ResNet-50
+model_version: 1.0.0
+
+# OPTIONAL: Metadata
+description: Deep residual network for image classification (1000 classes)
+author: Microsoft Research
+license: MIT
+
+# REQUIRED: Supported Tasks
+supported_tasks:
+  - image_classification
+
+# REQUIRED: Input Format
+input_format: NV12
+
+# REQUIRED: Expected Resolution
+# ResNet-50 typically uses 224x224 input
+expected_resolution: [224, 224]
+
+# REQUIRED: Resource Requirements
+resource_requirements:
+  # GPU not strictly required - can run on CPU
+  gpu_required: false
+
+  # GPU Memory estimate
+  gpu_memory_mb: 1000
+
+  # Allow CPU fallback
+  cpu_fallback_allowed: true
+
+# REQUIRED: Model Type
+model_type: pytorch
+
+# REQUIRED: Model Weights Path
+model_weights: weights/resnet50.pt
+
+# REQUIRED: Confidence Threshold
+# For classification, this is the minimum class probability
+confidence_threshold: 0.7
+
+# OPTIONAL: NMS not applicable for classification
+nms_iou_threshold: null
+
+# REQUIRED: Output Schema
+output_schema:
+  type: image_classification
+  format: class_probabilities
+  classes: 1000
+  class_names_file: imagenet_classes.txt

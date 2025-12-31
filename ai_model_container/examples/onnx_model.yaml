@@ -1,0 +1,53 @@
+# ONNX Model Example - EfficientNet
+# Phase 4.2.3 Model Configuration Template
+
+# REQUIRED: Model Identity
+model_id: efficientnet_b0_onnx
+model_name: EfficientNet-B0 (ONNX)
+model_version: 1.0.0
+
+# OPTIONAL: Metadata
+description: Efficient image classification model exported to ONNX format
+author: Google Research
+license: Apache-2.0
+
+# REQUIRED: Supported Tasks
+supported_tasks:
+  - image_classification
+
+# REQUIRED: Input Format
+input_format: NV12
+
+# REQUIRED: Expected Resolution
+expected_resolution: [224, 224]
+
+# REQUIRED: Resource Requirements
+resource_requirements:
+  # ONNX models can run on CPU efficiently
+  gpu_required: false
+
+  # GPU memory estimate
+  gpu_memory_mb: 800
+
+  # Allow CPU fallback
+  cpu_fallback_allowed: true
+
+# REQUIRED: Model Type
+# ONNX Runtime will be used for inference
+model_type: onnx
+
+# REQUIRED: Model Weights Path
+model_weights: weights/efficientnet_b0.onnx
+
+# REQUIRED: Confidence Threshold
+confidence_threshold: 0.75
+
+# OPTIONAL: NMS not applicable
+nms_iou_threshold: null
+
+# REQUIRED: Output Schema
+output_schema:
+  type: image_classification
+  format: class_probabilities
+  classes: 1000
+  class_names_file: imagenet_classes.txt

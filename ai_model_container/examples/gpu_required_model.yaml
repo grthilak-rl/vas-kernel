@@ -1,0 +1,54 @@
+# GPU-Required Model - Example of Strict GPU Requirement
+# Phase 4.2.3 Model Configuration Template
+
+# REQUIRED: Model Identity
+model_id: yolov8x_gpu_only
+model_name: YOLOv8 Extra-Large (GPU Only)
+model_version: 8.0.0
+
+# OPTIONAL: Metadata
+description: Large-scale object detection model that REQUIRES GPU for acceptable performance
+author: Ultralytics
+license: AGPL-3.0
+
+# REQUIRED: Supported Tasks
+supported_tasks:
+  - object_detection
+
+# REQUIRED: Input Format
+input_format: NV12
+
+# REQUIRED: Expected Resolution
+expected_resolution: [1280, 1280]
+
+# REQUIRED: Resource Requirements
+resource_requirements:
+  # CRITICAL: GPU is REQUIRED
+  # Container will FAIL FAST if no GPU available
+  gpu_required: true
+
+  # Large model requires significant GPU memory
+  gpu_memory_mb: 4000
+
+  # CRITICAL: Must be false when gpu_required is true
+  # This combination would be contradictory and will cause validation error
+  cpu_fallback_allowed: false
+
+# REQUIRED: Model Type
+model_type: pytorch
+
+# REQUIRED: Model Weights Path
+model_weights: weights/yolov8x.pt
+
+# REQUIRED: Confidence Threshold
+confidence_threshold: 0.6
+
+# OPTIONAL: NMS IOU Threshold
+nms_iou_threshold: 0.45
+
+# REQUIRED: Output Schema
+output_schema:
+  type: object_detection
+  format: xyxy
+  classes: 80
+  class_names_file: coco_classes.txt

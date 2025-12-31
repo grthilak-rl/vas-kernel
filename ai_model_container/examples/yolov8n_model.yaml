@@ -1,0 +1,60 @@
+# YOLOv8 Nano - Lightweight Object Detection Model
+# Phase 4.2.3 Model Configuration Template
+
+# REQUIRED: Model Identity
+model_id: yolov8n
+model_name: YOLOv8 Nano
+model_version: 8.0.0
+
+# OPTIONAL: Metadata
+description: Lightweight object detection model optimized for real-time inference
+author: Ultralytics
+license: AGPL-3.0
+
+# REQUIRED: Supported Tasks
+supported_tasks:
+  - object_detection
+
+# REQUIRED: Input Format
+# VAS uses NV12 format for decoded frames
+input_format: NV12
+
+# REQUIRED: Expected Resolution
+# [width, height] - model input size
+expected_resolution: [640, 640]
+
+# REQUIRED: Resource Requirements
+resource_requirements:
+  # GPU Required: If true, container MUST have GPU or will fail fast
+  gpu_required: false
+
+  # GPU Memory: Minimum GPU memory in MB (hint only, not enforced)
+  gpu_memory_mb: 500
+
+  # CPU Fallback: If true, container can run on CPU when GPU unavailable
+  # CRITICAL: Cannot be true if gpu_required is true (contradictory)
+  cpu_fallback_allowed: true
+
+# REQUIRED: Model Type
+# Supported: "pytorch" or "onnx"
+model_type: pytorch
+
+# REQUIRED: Model Weights Path
+# Can be absolute or relative to this model.yaml directory
+model_weights: weights/yolov8n.pt
+
+# REQUIRED: Confidence Threshold
+# Default confidence threshold for detections (0.0 to 1.0)
+confidence_threshold: 0.5
+
+# OPTIONAL: NMS IOU Threshold
+# Non-Maximum Suppression IOU threshold (for object detection models)
+nms_iou_threshold: 0.45
+
+# REQUIRED: Output Schema
+# Describes the output format of this model
+output_schema:
+  type: object_detection
+  format: xyxy  # Bounding box format: [x1, y1, x2, y2]
+  classes: 80   # Number of object classes
+  class_names_file: coco_classes.txt  # Optional class names file

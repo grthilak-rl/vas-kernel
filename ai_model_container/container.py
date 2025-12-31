@@ -1,5 +1,7 @@
 """
 Phase 4.1 – AI Model IPC & Inference Contract
+Phase 4.2.3 – Model Onboarding & Discovery
+
 AI MODEL CONTAINER ORCHESTRATION
 
 This module provides the main entry point for AI model containers.
@@ -10,17 +12,23 @@ PHASE 4.1 SCOPE:
 - Graceful shutdown handling
 - Signal handling for production use
 
+PHASE 4.2.3 ADDITIONS:
+- Model discovery integration
+- GPU requirement enforcement
+- model.yaml-based configuration
+- Fail-fast on GPU absence (when required)
+
 WHAT THIS IS:
 - Container process wrapper
 - IPC server lifecycle coordinator
 - Signal handler for clean shutdown
+- Model configuration validator
 
 WHAT THIS IS NOT:
-- Model onboarding logic (Phase 4.2)
-- GPU resource management (Phase 4.2)
-- Container discovery (Phase 4.2)
-- Health monitoring (Phase 4.2)
+- Health monitoring
 - Multi-model management (one container = one model)
+- Hot-reload mechanism
+- Runtime configuration updates
 
 CONTAINER CARDINALITY (CRITICAL):
 - Exactly ONE container per model type
@@ -36,6 +44,8 @@ from typing import Optional
 
 from .inference_handler import InferenceHandler
 from .ipc_server import IPCServer
+from .model_config import ModelConfig
+from .model_discovery import ModelDiscovery
 
 
 class ModelContainer:
@@ -48,13 +58,20 @@ class ModelContainer:
     - Container serves inference requests from multiple cameras
     - Container runs until explicitly stopped
 
-    LIFECYCLE:
-    1. Container starts
-    2. Model loads into GPU memory (Phase 4.2: currently mock)
-    3. IPC server starts listening
-    4. Container processes requests indefinitely
-    5. Container stops on signal (SIGTERM/SIGINT)
-    6. Model unloads, IPC server stops
+    LIFECYCLE (Phase 4.2.3):
+    1. Container starts with model_id
+    2. Model discovered via filesystem scan (model.yaml)
+    3. GPU requirements validated
+    4. Model loads into GPU/CPU memory
+    5. IPC server starts listening
+    6. Container processes requests indefinitely
+    7. Container stops on signal (SIGTERM/SIGINT)
+    8. Model unloads, IPC server stops
+
+    GPU REQUIREMENT ENFORCEMENT:
+    - If gpu_required=true and NO GPU → container FAILS FAST
+    - If cpu_fallback_allowed=true and NO GPU → container runs on CPU
+    - If gpu_required=false → container runs on CPU
 
     CONCURRENCY:
     - Container handles concurrent requests from multiple cameras
@@ -66,27 +83,93 @@ class ModelContainer:
     - Container failure affects ONLY this model
     - Other models continue to operate
     - Ruth AI Core detects container failure via IPC timeout
-    - Container restart is external responsibility (Phase 4.2)
+    - Container restart is external responsibility
     """
 
-    def __init__(self, model_id: str, model_config: Optional[dict] = None):
+    def __init__(
+        self,
+        model_id: str,
+        model_config: Optional[dict] = None,
+        models_dir: Optional[str] = None
+    ):
         """
         Initialize AI model container.
 
+        Phase 4.2.3 Behavior:
+        - Attempts to discover model via filesystem scan
+        - Falls back to legacy model_config if discovery fails
+        - Enforces GPU requirements from model.yaml
+
         Args:
             model_id: Unique identifier for this model
-            model_config: Optional model configuration
+            model_config: Optional legacy model configuration (Phase 4.2.1/4.2.2 compat)
+            models_dir: Optional models directory (default: /opt/ruth-ai/models)
 
-        Example:
+        Raises:
+            RuntimeError: If GPU required but unavailable
+            RuntimeError: If model discovery fails and no config provided
+
+        Example (Phase 4.2.3 - model.yaml):
+            container = ModelContainer(model_id="yolov8n")
+
+        Example (Phase 4.2.1/4.2.2 - legacy):
             container = ModelContainer(
                 model_id="yolov8n",
-                model_config={"device": "cuda:0", "batch_size": 1}
+                model_config={"device": "cuda:0", "model_type": "pytorch", "model_path": "/path/to/model.pt"}
             )
         """
         self.model_id = model_id
-        self.model_config = model_config or {}
+        self._running = False
 
-        # Initialize inference handler (loads model in Phase 4.2)
+        # Phase 4.2.3: Try model discovery first
+        discovered_config = None
+        if models_dir is not None or model_config is None:
+            # Attempt discovery
+            print(f"Attempting model discovery for: {model_id}")
+            discovery = ModelDiscovery(models_dir=models_dir)
+            available_models = discovery.discover_models()
+
+            if discovery.is_available(model_id):
+                model_cfg = discovery.get_model(model_id)
+                print(f"Model discovered: {model_cfg}")
+
+                # CRITICAL: Enforce GPU requirements
+                if model_cfg.gpu_required:
+                    # Check if GPU is actually available
+                    gpu_available = self._check_gpu_available()
+                    if not gpu_available:
+                        raise RuntimeError(
+                            f"FATAL: Model {model_id!r} requires GPU (gpu_required=true) "
+                            f"but no GPU is available. Container cannot start."
+                        )
+                    print(f"GPU required and available for model {model_id}")
+
+                # Convert to runtime config
+                discovered_config = model_cfg.to_runtime_config()
+                print(f"Using discovered configuration: {discovered_config}")
+            else:
+                reason = discovery.get_unavailable_reason(model_id)
+                print(f"WARNING: Model {model_id!r} not discovered or unavailable")
+                if reason:
+                    print(f"         Reason: {reason}")
+
+        # Determine final configuration
+        if discovered_config is not None:
+            # Phase 4.2.3: Use discovered config
+            self.model_config = discovered_config
+            print(f"Container using discovered configuration for {model_id}")
+        elif model_config is not None:
+            # Phase 4.2.1/4.2.2: Use legacy config
+            self.model_config = model_config
+            print(f"Container using legacy configuration for {model_id}")
+        else:
+            # No config available - FAIL
+            raise RuntimeError(
+                f"FATAL: Model {model_id!r} could not be discovered and no legacy config provided. "
+                f"Container cannot start."
+            )
+
+        # Initialize inference handler (loads model)
         self.inference_handler = InferenceHandler(
             model_id=self.model_id,
             model_config=self.model_config
@@ -98,8 +181,19 @@ class ModelContainer:
             inference_handler=self.inference_handler
         )
 
-        # Container state
-        self._running = False
+    def _check_gpu_available(self) -> bool:
+        """
+        Check if GPU is available.
+
+        Returns:
+            True if CUDA GPU available, False otherwise
+        """
+        try:
+            import torch
+            return torch.cuda.is_available()
+        except ImportError:
+            # PyTorch not available - assume no GPU
+            return False
 
     def start(self) -> None:
         """
