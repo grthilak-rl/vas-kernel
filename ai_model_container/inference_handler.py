@@ -1,6 +1,7 @@
 """
 Phase 4.1 – AI Model IPC & Inference Contract (FROZEN)
-Phase 4.2.1 – Real Model Loading & GPU Initialization (ACTIVE)
+Phase 4.2.1 – Real Model Loading & GPU Initialization (COMPLETED)
+Phase 4.2.2 – Frame Access, Preprocessing & Real Inference Execution (ACTIVE)
 
 STATELESS INFERENCE HANDLER
 
@@ -12,23 +13,30 @@ PHASE 4.1 SCOPE (FROZEN):
 - Frame reference validation
 - IPC contract enforcement
 
-PHASE 4.2.1 SCOPE (ACTIVE):
+PHASE 4.2.1 SCOPE (COMPLETED):
 - Real model loading at startup (PyTorch, ONNX Runtime)
 - GPU detection and initialization
 - CPU fallback when GPU absent
 - Thread-safe real inference execution
 
+PHASE 4.2.2 SCOPE (ACTIVE):
+- READ-ONLY frame access from shared memory
+- NV12 format preprocessing
+- Real model inference on actual frames
+- Model-specific post-processing (NMS, thresholding)
+
 WHAT THIS IS:
-- Inference request handler (with real model)
+- Inference request handler (with real model and frames)
 - Stateless per-request processor
 - GPU-accelerated or CPU-fallback inference
+- Real frame consumer and detector
 
 WHAT THIS IS NOT:
-- Frame decoding (frames are already decoded)
+- Frame decoder (frames are already decoded by FFmpeg)
 - Temporal tracking (stateless only)
 - FPS enforcement (handled by Ruth AI Core)
-- Model onboarding (Phase 4.2.2+)
-- Model discovery (Phase 4.2.2+)
+- Model onboarding (Phase 4.2.3+)
+- Model discovery (Phase 4.2.3+)
 
 CRITICAL CONSTRAINTS (UNCHANGED):
 - Handlers MUST be stateless per request
@@ -37,6 +45,8 @@ CRITICAL CONSTRAINTS (UNCHANGED):
 - Handlers MUST NOT perform temporal aggregation
 - Handlers MUST NOT retry failed inference
 - Handlers MUST NOT queue or buffer frames
+- Handlers MUST NOT retain frame references beyond request scope
+- Shared memory is READ-ONLY (no mutations)
 """
 
 import os
@@ -45,7 +55,10 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
+import numpy as np
+
 from .schema import Detection, InferenceRequest, InferenceResponse
+from .frame_reader import FrameReader, NV12Preprocessor
 
 
 class InferenceHandler:
@@ -443,9 +456,14 @@ class InferenceHandler:
         """
         Run PyTorch model inference.
 
-        PHASE 4.2.1: Simplified implementation.
-        Returns mock detections to demonstrate the flow.
-        Full implementation requires model-specific preprocessing.
+        PHASE 4.2.2: REAL FRAME PROCESSING AND INFERENCE
+
+        This method now:
+        1. Reads frame from shared memory (READ-ONLY)
+        2. Converts NV12 to RGB
+        3. Preprocesses for model
+        4. Runs real PyTorch inference
+        5. Post-processes results
 
         Args:
             request: InferenceRequest
@@ -453,32 +471,92 @@ class InferenceHandler:
         Returns:
             List of Detection objects
         """
-        # Phase 4.2.1: Simplified - return mock detections
-        # Phase 4.2.2+: Read frame, preprocess, run model, post-process
+        try:
+            import torch
+        except ImportError:
+            # Fallback if PyTorch not available
+            print("WARNING: PyTorch not available, returning empty detections")
+            return []
 
-        # For now, return mock detections to demonstrate the pipeline
-        frame_id = request.frame_metadata.get("frame_id", 0)
-        detections = []
+        # Phase 4.2.2: Read real frame from shared memory
+        frame_reader = FrameReader()
+        frame_data = frame_reader.read_frame(
+            frame_reference=request.frame_reference,
+            frame_metadata=request.frame_metadata
+        )
 
-        # Mock detection (demonstrates real inference would return similar structure)
-        if frame_id % 2 == 0:
-            detections.append(Detection(
-                class_id=0,
-                class_name="person",
-                confidence=0.87,
-                bbox=[0.15, 0.12, 0.35, 0.55],
-                track_id=None
-            ))
+        if frame_data is None:
+            # Frame read failed - return empty detections
+            print(f"WARNING: Failed to read frame from {request.frame_reference}")
+            return []
+
+        # Convert NV12 to RGB
+        width = request.frame_metadata.get("width", 1920)
+        height = request.frame_metadata.get("height", 1080)
+
+        preprocessor = NV12Preprocessor()
+        rgb_image = preprocessor.nv12_to_rgb(frame_data, width, height)
+
+        if rgb_image is None:
+            print("WARNING: Failed to convert NV12 to RGB")
+            return []
+
+        # Preprocess for model
+        # Get target size from config, default to 640x640
+        target_size = self.model_config.get("input_size", [640, 640])
+        if isinstance(target_size, list) and len(target_size) == 2:
+            target_size = tuple(target_size)
+        else:
+            target_size = (640, 640)
+
+        model_input = preprocessor.preprocess_for_model(
+            rgb_image,
+            target_size=target_size,
+            normalize=True
+        )
+
+        if model_input is None:
+            print("WARNING: Failed to preprocess frame")
+            return []
+
+        # Convert to PyTorch tensor
+        input_tensor = torch.from_numpy(model_input).unsqueeze(0)  # Add batch dimension
+
+        # Move to device
+        input_tensor = input_tensor.to(self._device)
+
+        # Run inference
+        with torch.no_grad():
+            # Phase 4.2.2: This is a simplified inference
+            # Real models (YOLO, ResNet, etc.) have specific forward passes
+            # For now, we'll check if model is callable
+            if hasattr(self._model, '__call__'):
+                output = self._model(input_tensor)
+            else:
+                print("WARNING: Model not callable, returning empty detections")
+                return []
+
+        # Post-process results
+        # Phase 4.2.2: Simplified post-processing
+        # Real post-processing depends on model architecture
+        detections = self._post_process_pytorch_output(output, request)
 
         return detections
+
+
 
     def _run_onnx_inference(self, request: InferenceRequest) -> List[Detection]:
         """
         Run ONNX model inference.
 
-        PHASE 4.2.1: Simplified implementation.
-        Returns mock detections to demonstrate the flow.
-        Full implementation requires model-specific preprocessing.
+        PHASE 4.2.2: REAL FRAME PROCESSING AND INFERENCE
+
+        This method now:
+        1. Reads frame from shared memory (READ-ONLY)
+        2. Converts NV12 to RGB
+        3. Preprocesses for model
+        4. Runs real ONNX inference
+        5. Post-processes results
 
         Args:
             request: InferenceRequest
@@ -486,24 +564,208 @@ class InferenceHandler:
         Returns:
             List of Detection objects
         """
-        # Phase 4.2.1: Simplified - return mock detections
-        # Phase 4.2.2+: Read frame, preprocess, run model, post-process
+        try:
+            import onnxruntime as ort
+        except ImportError:
+            print("WARNING: ONNX Runtime not available, returning empty detections")
+            return []
 
-        # For now, return mock detections to demonstrate the pipeline
-        frame_id = request.frame_metadata.get("frame_id", 0)
-        detections = []
+        # Phase 4.2.2: Read real frame from shared memory
+        frame_reader = FrameReader()
+        frame_data = frame_reader.read_frame(
+            frame_reference=request.frame_reference,
+            frame_metadata=request.frame_metadata
+        )
 
-        # Mock detection (demonstrates real inference would return similar structure)
-        if frame_id % 3 == 0:
-            detections.append(Detection(
-                class_id=2,
-                class_name="car",
-                confidence=0.75,
-                bbox=[0.55, 0.45, 0.85, 0.85],
-                track_id=None
-            ))
+        if frame_data is None:
+            print(f"WARNING: Failed to read frame from {request.frame_reference}")
+            return []
 
-        return detections
+        # Convert NV12 to RGB
+        width = request.frame_metadata.get("width", 1920)
+        height = request.frame_metadata.get("height", 1080)
+
+        preprocessor = NV12Preprocessor()
+        rgb_image = preprocessor.nv12_to_rgb(frame_data, width, height)
+
+        if rgb_image is None:
+            print("WARNING: Failed to convert NV12 to RGB")
+            return []
+
+        # Preprocess for model
+        target_size = self.model_config.get("input_size", [640, 640])
+        if isinstance(target_size, list) and len(target_size) == 2:
+            target_size = tuple(target_size)
+        else:
+            target_size = (640, 640)
+
+        model_input = preprocessor.preprocess_for_model(
+            rgb_image,
+            target_size=target_size,
+            normalize=True
+        )
+
+        if model_input is None:
+            print("WARNING: Failed to preprocess frame")
+            return []
+
+        # Add batch dimension: (3, H, W) -> (1, 3, H, W)
+        model_input = np.expand_dims(model_input, axis=0).astype(np.float32)
+
+        # Run ONNX inference
+        try:
+            # Get input name
+            input_name = self._model.get_inputs()[0].name
+
+            # Run inference
+            outputs = self._model.run(None, {input_name: model_input})
+
+            # Post-process results
+            detections = self._post_process_onnx_output(outputs, request)
+
+            return detections
+
+        except Exception as e:
+            print(f"WARNING: ONNX inference failed: {e}")
+            return []
+
+    def _post_process_pytorch_output(
+        self,
+        output: Any,
+        request: InferenceRequest
+    ) -> List[Detection]:
+        """
+        Post-process PyTorch model output to Detection objects.
+
+        PHASE 4.2.2: Simplified post-processing.
+        Real post-processing depends on specific model architecture.
+
+        Args:
+            output: Raw model output (tensor or dict)
+            request: Original inference request
+
+        Returns:
+            List of Detection objects
+        """
+        try:
+            import torch
+
+            # Phase 4.2.2: Simplified post-processing
+            # Real models (YOLO, Faster R-CNN, etc.) have specific output formats
+            # For demonstration, we'll handle a generic detection output
+
+            # Check if output is a tensor or list of tensors
+            if isinstance(output, torch.Tensor):
+                # Simple tensor output
+                # Assume shape: [batch, num_detections, 6] where 6 = [x1, y1, x2, y2, conf, class]
+                output_np = output.cpu().numpy()
+
+                # Get confidence threshold
+                conf_threshold = self.model_config.get("confidence_threshold", 0.5)
+
+                detections = []
+
+                # Process first batch only (we use batch_size=1)
+                if len(output_np.shape) >= 2:
+                    for det in output_np[0]:
+                        if len(det) >= 6:
+                            x1, y1, x2, y2, conf, class_id = det[:6]
+
+                            # Filter by confidence
+                            if conf >= conf_threshold:
+                                # Normalize bounding box
+                                bbox = [
+                                    float(max(0.0, min(1.0, x1))),
+                                    float(max(0.0, min(1.0, y1))),
+                                    float(max(0.0, min(1.0, x2))),
+                                    float(max(0.0, min(1.0, y2)))
+                                ]
+
+                                # Create detection
+                                detections.append(Detection(
+                                    class_id=int(class_id),
+                                    class_name=f"class_{int(class_id)}",  # Generic name
+                                    confidence=float(conf),
+                                    bbox=bbox,
+                                    track_id=None
+                                ))
+
+                return detections
+
+            else:
+                # Unknown output format
+                print(f"WARNING: Unexpected PyTorch output type: {type(output)}")
+                return []
+
+        except Exception as e:
+            print(f"WARNING: Post-processing failed: {e}")
+            return []
+
+    def _post_process_onnx_output(
+        self,
+        outputs: List[np.ndarray],
+        request: InferenceRequest
+    ) -> List[Detection]:
+        """
+        Post-process ONNX model output to Detection objects.
+
+        PHASE 4.2.2: Simplified post-processing.
+        Real post-processing depends on specific model architecture.
+
+        Args:
+            outputs: List of output arrays from ONNX model
+            request: Original inference request
+
+        Returns:
+            List of Detection objects
+        """
+        try:
+            # Phase 4.2.2: Simplified post-processing
+            # ONNX outputs vary by model, but typically:
+            # - YOLOv8: [batch, num_det, 6] where 6 = [x1, y1, x2, y2, conf, class]
+            # - Faster R-CNN: Multiple outputs (boxes, scores, classes)
+
+            if not outputs or len(outputs) == 0:
+                return []
+
+            # Get first output
+            output = outputs[0]
+
+            # Get confidence threshold
+            conf_threshold = self.model_config.get("confidence_threshold", 0.5)
+
+            detections = []
+
+            # Assume shape: [batch, num_detections, 6]
+            if len(output.shape) >= 2:
+                for det in output[0]:  # Process first batch
+                    if len(det) >= 6:
+                        x1, y1, x2, y2, conf, class_id = det[:6]
+
+                        # Filter by confidence
+                        if conf >= conf_threshold:
+                            # Normalize bounding box
+                            bbox = [
+                                float(max(0.0, min(1.0, x1))),
+                                float(max(0.0, min(1.0, y1))),
+                                float(max(0.0, min(1.0, x2))),
+                                float(max(0.0, min(1.0, y2)))
+                            ]
+
+                            # Create detection
+                            detections.append(Detection(
+                                class_id=int(class_id),
+                                class_name=f"class_{int(class_id)}",
+                                confidence=float(conf),
+                                bbox=bbox,
+                                track_id=None
+                            ))
+
+            return detections
+
+        except Exception as e:
+            print(f"WARNING: Post-processing failed: {e}")
+            return []
 
     def cleanup(self) -> None:
         """
