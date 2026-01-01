@@ -39,6 +39,29 @@ async def test_stream_data():
     }
 
 
+@pytest.fixture
+async def db() -> AsyncGenerator[AsyncSession, None]:
+    """Create async database session for testing."""
+    # Use test database URL or fallback to main database
+    test_db_url = settings.database_url
+
+    engine = create_async_engine(
+        test_db_url,
+        echo=False,
+        pool_pre_ping=True
+    )
+
+    TestSessionLocal = sessionmaker(
+        engine,
+        class_=AsyncSession,
+        expire_on_commit=False
+    )
+
+    async with TestSessionLocal() as session:
+        yield session
+        await session.rollback()  # Rollback any changes after test
+
+
 # Phase markers for incremental testing
 def pytest_collection_modifyitems(config, items):
     """Add phase markers to tests based on filename prefix."""

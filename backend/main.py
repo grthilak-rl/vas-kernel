@@ -158,7 +158,7 @@ async def root():
     }
 
 # API routes
-from app.routes import devices, streams, mediasoup, rtsp_pipeline, recordings, websocket, snapshots, bookmarks, api_keys, ruth_ai_compat
+from app.routes import devices, streams, mediasoup, rtsp_pipeline, recordings, websocket, snapshots, bookmarks, api_keys, ruth_ai_compat, ai_events
 
 app.include_router(devices.router)
 app.include_router(streams.router)
@@ -170,6 +170,7 @@ app.include_router(snapshots.router)
 app.include_router(bookmarks.router)
 app.include_router(api_keys.router)
 app.include_router(ruth_ai_compat.router)
+app.include_router(ai_events.router)  # Phase 5.3: AI Events Read APIs
 
 # Add routes for HLS streaming (without api/v1 prefix for convenience)
 from fastapi.responses import FileResponse
