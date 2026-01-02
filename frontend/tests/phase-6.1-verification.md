@@ -44,7 +44,7 @@ Phase 5.2 – Snapshot / Clip Triggers: COMPLETED
 Phase 5.3 – Read-only Backend APIs: COMPLETED
 
 Phase 6.1 – Frontend Overlay Data Wiring: COMPLETED
-Phase 6.2 – Overlay Rendering: ACTIVE
+Phase 6.2 – Overlay Rendering: COMPLETED
 
 Only phases marked ACTIVE may be implemented.
 All other phases are FROZEN and must not be modified.

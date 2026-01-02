@@ -1,9 +1,10 @@
 // ============================================================================
 // Phase 6.1: Stream Player with AI Event Data Wiring
+// Phase 6.2: AI Overlay Rendering Integration
 // ============================================================================
-// Wrapper component that combines video playback with AI event data fetching.
-// Handles mode-specific time windows and polling strategies.
-// No rendering of overlays - pure data wiring only.
+// Wrapper component that combines video playback with AI event data fetching
+// and overlay rendering.
+// Handles mode-specific time windows, polling strategies, and visual overlays.
 
 'use client';
 
@@ -11,6 +12,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useAIEvents } from '@/hooks/useAIEvents';
 import { AIEvent } from '@/lib/api';
 import DualModePlayer, { DualModePlayerRef } from '@/components/players/DualModePlayer';
+import { AIOverlayCanvas } from '@/components/overlays/AIOverlayCanvas';
 
 interface StreamWithAIDataProps {
   deviceId: string;
@@ -22,22 +24,25 @@ interface StreamWithAIDataProps {
 
 /**
  * Phase 6.1: Stream player with AI event data wiring.
+ * Phase 6.2: AI overlay rendering integration.
  *
  * This component:
  * - Renders the video player (DualModePlayer)
- * - Fetches AI events based on playback mode and time window
- * - Manages polling for live mode
- * - Handles time window calculation for historical mode
- * - DOES NOT render overlays (Phase 6.2)
+ * - Fetches AI events based on playback mode and time window (Phase 6.1)
+ * - Manages polling for live mode (Phase 6.1)
+ * - Handles time window calculation for historical mode (Phase 6.1)
+ * - Renders AI overlays on top of video (Phase 6.2)
  *
  * Data flow:
  * 1. Player mode changes (live/historical) → update fetch strategy
  * 2. Time window changes → refetch events
- * 3. AI events fetched → stored in state (ready for Phase 6.2)
+ * 3. AI events fetched → passed to overlay renderer
+ * 4. Overlay canvas renders bounding boxes and labels
  *
  * Failure semantics:
- * - AI fetch failures are silent
- * - Video playback is unaffected by AI data availability
+ * - AI fetch failures are silent (Phase 6.1)
+ * - Overlay rendering failures are silent (Phase 6.2)
+ * - Video playback is unaffected by AI data or rendering issues
  */
 export function StreamWithAIData({
   deviceId,
@@ -49,6 +54,7 @@ export function StreamWithAIData({
   const [playerMode, setPlayerMode] = useState<'live' | 'historical'>('live');
   const [timeWindow, setTimeWindow] = useState<{ start: string; end: string } | null>(null);
   const internalPlayerRef = useRef<DualModePlayerRef | null>(null);
+  const [videoElement, setVideoElement] = useState<HTMLVideoElement | null>(null);
 
   // Phase 6.1: Fetch AI events based on player mode
   // Live mode: Rolling 30-second window with polling
@@ -98,8 +104,22 @@ export function StreamWithAIData({
     }
   }, [playerRef]);
 
+  // Phase 6.2: Track video element for overlay rendering
+  useEffect(() => {
+    const updateVideoElement = () => {
+      const video = internalPlayerRef.current?.getVideoElement();
+      setVideoElement(video || null);
+    };
+
+    // Initial check
+    updateVideoElement();
+
+    // Periodic check for video element availability
+    const interval = setInterval(updateVideoElement, 500);
+    return () => clearInterval(interval);
+  }, [shouldConnect, playerMode]);
+
   // Phase 6.1: Log AI event data for debugging
-  // In Phase 6.2, this data will be passed to overlay renderer
   useEffect(() => {
     if (events.length > 0) {
       console.log(`[Phase 6.1] AI events for ${deviceName} (${playerMode}):`, {
@@ -110,15 +130,35 @@ export function StreamWithAIData({
     }
   }, [events, deviceName, playerMode]);
 
+  // Phase 6.2: Calculate current timestamp for overlay filtering
+  const getCurrentTimestamp = (): string | null => {
+    if (playerMode === 'live') {
+      // Live mode: use current time
+      return new Date().toISOString();
+    }
+    // Historical mode: would use video currentTime + playlist start time
+    // For now, return null to show all events in time window
+    return null;
+  };
+
   return (
-    <DualModePlayer
-      ref={internalPlayerRef}
-      deviceId={deviceId}
-      deviceName={deviceName}
-      shouldConnect={shouldConnect}
-      onModeChange={handleModeChange}
-      // Phase 6.1: AI events are fetched but not yet used for rendering
-      // Phase 6.2 will add overlay rendering based on this data
-    />
+    <div className="relative w-full h-full">
+      <DualModePlayer
+        ref={internalPlayerRef}
+        deviceId={deviceId}
+        deviceName={deviceName}
+        shouldConnect={shouldConnect}
+        onModeChange={handleModeChange}
+      />
+      {/* Phase 6.2: AI Overlay Rendering */}
+      {videoElement && events.length > 0 && (
+        <AIOverlayCanvas
+          videoElement={videoElement}
+          events={events}
+          currentTimestamp={getCurrentTimestamp()}
+          timeTolerance={2000}
+        />
+      )}
+    </div>
   );
 }

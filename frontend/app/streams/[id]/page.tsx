@@ -1,10 +1,11 @@
 'use client';
 
 import { useParams, useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import WebRTCPlayer from '@/components/players/WebRTCPlayer';
 import { getDevices, Device, startStream } from '@/lib/api';
 import { useAIEvents } from '@/hooks/useAIEvents';
+import { AIOverlayCanvas } from '@/components/overlays/AIOverlayCanvas';
 
 export default function StreamViewPage() {
   const params = useParams();
@@ -13,6 +14,7 @@ export default function StreamViewPage() {
   const [device, setDevice] = useState<Device | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
 
   // Phase 6.1: Fetch AI events for this stream (live mode only, with polling)
   const { events: aiEvents, loading: aiLoading, error: aiError } = useAIEvents({
@@ -56,6 +58,23 @@ export default function StreamViewPage() {
       });
     }
   }, [aiEvents, deviceId]);
+
+  // Phase 6.2: Track video element for overlay rendering
+  useEffect(() => {
+    const findVideoElement = () => {
+      const video = document.querySelector('video');
+      if (video && video !== videoRef.current) {
+        videoRef.current = video;
+      }
+    };
+
+    // Initial check
+    findVideoElement();
+
+    // Periodic check for video element
+    const interval = setInterval(findVideoElement, 500);
+    return () => clearInterval(interval);
+  }, [device?.is_active]);
 
   if (loading) {
     return (
@@ -102,11 +121,20 @@ export default function StreamViewPage() {
       </div>
 
       <div className="bg-white rounded-lg shadow-lg p-6">
-        <div className="aspect-video w-full bg-gray-900 rounded-lg overflow-hidden mb-6">
+        <div className="aspect-video w-full bg-gray-900 rounded-lg overflow-hidden mb-6 relative">
           <WebRTCPlayer
             streamId={deviceId}
             signalingUrl="ws://10.30.250.245:8080/ws/signaling"
           />
+          {/* Phase 6.2: AI Overlay Rendering */}
+          {videoRef.current && aiEvents.length > 0 && (
+            <AIOverlayCanvas
+              videoElement={videoRef.current}
+              events={aiEvents}
+              currentTimestamp={new Date().toISOString()}
+              timeTolerance={2000}
+            />
+          )}
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
