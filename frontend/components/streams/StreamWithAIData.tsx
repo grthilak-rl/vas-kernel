@@ -1,18 +1,20 @@
 // ============================================================================
 // Phase 6.1: Stream Player with AI Event Data Wiring
 // Phase 6.2: AI Overlay Rendering Integration
+// Phase 6.3: User Settings Integration
 // ============================================================================
-// Wrapper component that combines video playback with AI event data fetching
-// and overlay rendering.
+// Wrapper component that combines video playback with AI event data fetching,
+// overlay rendering, and user-configurable filtering/styling.
 // Handles mode-specific time windows, polling strategies, and visual overlays.
 
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { useAIEvents } from '@/hooks/useAIEvents';
 import { AIEvent } from '@/lib/api';
 import DualModePlayer, { DualModePlayerRef } from '@/components/players/DualModePlayer';
 import { AIOverlayCanvas } from '@/components/overlays/AIOverlayCanvas';
+import { OverlaySettings } from '@/hooks/useOverlaySettings';
 
 interface StreamWithAIDataProps {
   deviceId: string;
@@ -20,11 +22,14 @@ interface StreamWithAIDataProps {
   shouldConnect: boolean;
   onModeChange?: (mode: 'live' | 'historical') => void;
   playerRef?: (ref: DualModePlayerRef | null) => void;
+  // Phase 6.3: User overlay settings
+  overlaySettings?: OverlaySettings;
 }
 
 /**
  * Phase 6.1: Stream player with AI event data wiring.
  * Phase 6.2: AI overlay rendering integration.
+ * Phase 6.3: User settings and filtering.
  *
  * This component:
  * - Renders the video player (DualModePlayer)
@@ -32,16 +37,19 @@ interface StreamWithAIDataProps {
  * - Manages polling for live mode (Phase 6.1)
  * - Handles time window calculation for historical mode (Phase 6.1)
  * - Renders AI overlays on top of video (Phase 6.2)
+ * - Applies user settings for filtering and styling (Phase 6.3)
  *
  * Data flow:
  * 1. Player mode changes (live/historical) → update fetch strategy
  * 2. Time window changes → refetch events
  * 3. AI events fetched → passed to overlay renderer
- * 4. Overlay canvas renders bounding boxes and labels
+ * 4. User settings applied → filter and style overlays
+ * 5. Overlay canvas renders bounding boxes and labels
  *
  * Failure semantics:
  * - AI fetch failures are silent (Phase 6.1)
  * - Overlay rendering failures are silent (Phase 6.2)
+ * - Invalid settings fallback to defaults (Phase 6.3)
  * - Video playback is unaffected by AI data or rendering issues
  */
 export function StreamWithAIData({
@@ -50,6 +58,7 @@ export function StreamWithAIData({
   shouldConnect,
   onModeChange,
   playerRef,
+  overlaySettings,
 }: StreamWithAIDataProps) {
   const [playerMode, setPlayerMode] = useState<'live' | 'historical'>('live');
   const [timeWindow, setTimeWindow] = useState<{ start: string; end: string } | null>(null);
@@ -151,12 +160,14 @@ export function StreamWithAIData({
         onModeChange={handleModeChange}
       />
       {/* Phase 6.2: AI Overlay Rendering */}
+      {/* Phase 6.3: With user settings */}
       {videoElement && events.length > 0 && (
         <AIOverlayCanvas
           videoElement={videoElement}
           events={events}
           currentTimestamp={getCurrentTimestamp()}
           timeTolerance={2000}
+          settings={overlaySettings}
         />
       )}
     </div>

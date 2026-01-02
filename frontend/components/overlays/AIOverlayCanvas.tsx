@@ -1,14 +1,17 @@
 // ============================================================================
 // Phase 6.2: AI Overlay Rendering Component
+// Phase 6.3: User Settings Integration
 // ============================================================================
 // Canvas-based overlay rendering for AI detection results.
 // Renders bounding boxes, labels, and confidence scores on top of video.
 // Model-agnostic, time-aligned, non-blocking, fail-silent.
+// Phase 6.3: Applies user-configured filtering and styling.
 
 'use client';
 
 import { useEffect, useRef } from 'react';
 import { AIEvent } from '@/lib/api';
+import { OverlaySettings } from '@/hooks/useOverlaySettings';
 
 interface AIOverlayCanvasProps {
   /**
@@ -33,6 +36,12 @@ interface AIOverlayCanvasProps {
    * Default: 2000ms (2 seconds)
    */
   timeTolerance?: number;
+
+  /**
+   * Phase 6.3: User overlay settings for filtering and styling
+   * If not provided, uses default rendering behavior
+   */
+  settings?: Partial<OverlaySettings>;
 
   /**
    * Optional className for styling
@@ -87,10 +96,24 @@ export function AIOverlayCanvas({
   events,
   currentTimestamp = null,
   timeTolerance = 2000,
+  settings = {},
   className = '',
 }: AIOverlayCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationFrameRef = useRef<number | null>(null);
+
+  // Phase 6.3: Apply default settings
+  const {
+    enabled = true,
+    showLabels = true,
+    showConfidence = true,
+    confidenceThreshold = 0.0,
+    boxOpacity = 1.0,
+    labelOpacity = 0.7,
+    boxColor = '#00FF00',
+    boxLineWidth = 2,
+    visibleModels = [],
+  } = settings;
 
   /**
    * Parse detection data from various model formats.
@@ -169,42 +192,65 @@ export function AIOverlayCanvas({
   };
 
   /**
-   * Filter events by time proximity.
-   * Phase 6.2: Only render events close to current playback position.
+   * Filter events by time proximity, model, and confidence.
+   * Phase 6.2: Time-based filtering
+   * Phase 6.3: Model and confidence filtering
    */
-  const filterEventsByTime = (events: AIEvent[]): AIEvent[] => {
-    if (!currentTimestamp) {
-      // Live mode: show all recent events
-      return events;
+  const filterEvents = (events: AIEvent[]): AIEvent[] => {
+    let filtered = events;
+
+    // Phase 6.2: Time-based filtering
+    if (currentTimestamp) {
+      try {
+        const currentTime = new Date(currentTimestamp).getTime();
+        filtered = filtered.filter((event) => {
+          try {
+            const eventTime = new Date(event.timestamp).getTime();
+            const diff = Math.abs(currentTime - eventTime);
+            return diff <= timeTolerance;
+          } catch {
+            // Invalid timestamp - skip
+            return false;
+          }
+        });
+      } catch {
+        // Invalid currentTimestamp - show all events
+      }
     }
 
-    try {
-      const currentTime = new Date(currentTimestamp).getTime();
-      return events.filter((event) => {
-        try {
-          const eventTime = new Date(event.timestamp).getTime();
-          const diff = Math.abs(currentTime - eventTime);
-          return diff <= timeTolerance;
-        } catch {
-          // Invalid timestamp - skip
-          return false;
-        }
-      });
-    } catch {
-      // Invalid currentTimestamp - show all events
-      return events;
+    // Phase 6.3: Model filtering
+    if (visibleModels.length > 0) {
+      filtered = filtered.filter((event) => visibleModels.includes(event.model_id));
     }
+
+    return filtered;
+  };
+
+  /**
+   * Phase 6.3: Filter detection by confidence threshold
+   */
+  const filterDetection = (detection: NormalizedDetection): boolean => {
+    if (detection.confidence === undefined) {
+      return true; // No confidence info - show by default
+    }
+    return detection.confidence >= confidenceThreshold;
   };
 
   /**
    * Render overlays on canvas.
    * Phase 6.2: Draw bounding boxes, labels, and confidence scores.
+   * Phase 6.3: Apply user settings for filtering and styling.
    */
   const renderOverlays = () => {
     const canvas = canvasRef.current;
     const video = videoElement;
 
     if (!canvas || !video) {
+      return;
+    }
+
+    // Phase 6.3: Don't render if overlays are disabled
+    if (!enabled) {
       return;
     }
 
@@ -224,8 +270,8 @@ export function AIOverlayCanvas({
       // Clear canvas
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Filter events by time
-      const relevantEvents = filterEventsByTime(events);
+      // Phase 6.2 + 6.3: Filter events by time, model, and confidence
+      const relevantEvents = filterEvents(events);
 
       if (relevantEvents.length === 0) {
         return;
@@ -242,6 +288,11 @@ export function AIOverlayCanvas({
         const detections = parseDetections(event.detections);
 
         for (const detection of detections) {
+          // Phase 6.3: Filter by confidence threshold
+          if (!filterDetection(detection)) {
+            continue;
+          }
+
           let { x, y, width, height } = detection;
 
           // Convert normalized coordinates to pixels if needed
@@ -263,34 +314,41 @@ export function AIOverlayCanvas({
             continue;
           }
 
-          // Draw bounding box
-          ctx.strokeStyle = '#00FF00'; // Green box
-          ctx.lineWidth = 2;
+          // Phase 6.3: Draw bounding box with user settings
+          ctx.globalAlpha = boxOpacity;
+          ctx.strokeStyle = boxColor;
+          ctx.lineWidth = boxLineWidth;
           ctx.strokeRect(x, y, width, height);
+          ctx.globalAlpha = 1.0;
 
-          // Draw label background and text
-          if (detection.label || detection.confidence !== undefined) {
+          // Phase 6.3: Draw label background and text (if enabled)
+          if ((showLabels || showConfidence) && (detection.label || detection.confidence !== undefined)) {
             const labelParts: string[] = [];
-            if (detection.label) {
+            if (showLabels && detection.label) {
               labelParts.push(detection.label);
             }
-            if (detection.confidence !== undefined) {
+            if (showConfidence && detection.confidence !== undefined) {
               labelParts.push(`${(detection.confidence * 100).toFixed(0)}%`);
             }
-            const labelText = labelParts.join(' ');
 
-            ctx.font = '14px sans-serif';
-            const textMetrics = ctx.measureText(labelText);
-            const textWidth = textMetrics.width;
-            const textHeight = 16;
+            if (labelParts.length > 0) {
+              const labelText = labelParts.join(' ');
 
-            // Label background (black with opacity)
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-            ctx.fillRect(x, y - textHeight - 4, textWidth + 8, textHeight + 4);
+              ctx.font = '14px sans-serif';
+              const textMetrics = ctx.measureText(labelText);
+              const textWidth = textMetrics.width;
+              const textHeight = 16;
 
-            // Label text (white)
-            ctx.fillStyle = '#FFFFFF';
-            ctx.fillText(labelText, x + 4, y - 6);
+              // Label background (black with user opacity)
+              ctx.globalAlpha = labelOpacity;
+              ctx.fillStyle = '#000000';
+              ctx.fillRect(x, y - textHeight - 4, textWidth + 8, textHeight + 4);
+              ctx.globalAlpha = 1.0;
+
+              // Label text (white)
+              ctx.fillStyle = '#FFFFFF';
+              ctx.fillText(labelText, x + 4, y - 6);
+            }
           }
         }
       }
@@ -303,6 +361,7 @@ export function AIOverlayCanvas({
   /**
    * Animation loop for continuous rendering.
    * Phase 6.2: Render at ~30 FPS for smooth updates.
+   * Phase 6.3: Update when settings change.
    */
   useEffect(() => {
     const animate = () => {
@@ -319,7 +378,21 @@ export function AIOverlayCanvas({
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [videoElement, events, currentTimestamp, timeTolerance]);
+  }, [
+    videoElement,
+    events,
+    currentTimestamp,
+    timeTolerance,
+    enabled,
+    showLabels,
+    showConfidence,
+    confidenceThreshold,
+    boxOpacity,
+    labelOpacity,
+    boxColor,
+    boxLineWidth,
+    visibleModels,
+  ]);
 
   /**
    * Handle window resize to update canvas dimensions.

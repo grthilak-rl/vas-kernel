@@ -1,10 +1,12 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import DualModePlayer, { DualModePlayerRef } from '@/components/players/DualModePlayer';
 import { StreamWithAIData } from '@/components/streams/StreamWithAIData';
 import { getDevices, Device, captureBookmarkLive, captureBookmarkHistorical } from '@/lib/api';
 import { CameraIcon, VideoCameraIcon, PlayIcon, StopIcon } from '@heroicons/react/24/outline';
+import { useOverlaySettings } from '@/hooks/useOverlaySettings';
+import { AIOverlayControls } from '@/components/overlays/AIOverlayControls';
 
 type GridSize = 2 | 3 | 4;
 
@@ -22,6 +24,9 @@ export default function StreamsPage() {
   const [bookmarkSuccess, setBookmarkSuccess] = useState<Record<string, boolean>>({});
   const [playerModes, setPlayerModes] = useState<Record<string, 'live' | 'historical'>>({});
   const playerRefs = useRef<Record<string, DualModePlayerRef | null>>({});
+
+  // Phase 6.3: Overlay settings management
+  const { settings, updateSettings, resetSettings } = useOverlaySettings();
 
   // Load persisted state on mount
   useEffect(() => {
@@ -432,6 +437,13 @@ export default function StreamsPage() {
         </div>
       </div>
 
+      {/* Phase 6.3: AI Overlay Controls */}
+      <AIOverlayControls
+        settings={settings}
+        onUpdateSettings={updateSettings}
+        onResetSettings={resetSettings}
+      />
+
       {/* Stream Grid */}
       {selectedDevices.length > 0 ? (
         <div className={`grid ${getGridClassName()} gap-6`}>
@@ -440,6 +452,7 @@ export default function StreamsPage() {
               {/* Video Player Area */}
               <div className="aspect-video bg-gray-900 relative">
                 {/* Phase 6.1: StreamWithAIData wraps DualModePlayer with AI event fetching */}
+                {/* Phase 6.3: With overlay settings */}
                 <StreamWithAIData
                   deviceId={device.id}
                   deviceName={device.name}
@@ -448,6 +461,7 @@ export default function StreamsPage() {
                     setPlayerModes(prev => ({ ...prev, [device.id]: mode }));
                   }}
                   playerRef={(el) => { playerRefs.current[device.id] = el; }}
+                  overlaySettings={settings}
                 />
                 {!device.is_active && !activeStreams[device.id] && (
                   <>
