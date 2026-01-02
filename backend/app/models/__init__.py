@@ -6,6 +6,7 @@ from app.models.bookmark import Bookmark
 from app.models.snapshot import Snapshot
 from app.models.api_key import ApiKey
 from app.models.ai_event import AIEvent
+from app.models.ai_model_assignment import AIModelAssignment
 
 __all__ = [
     "Device",
@@ -15,4 +16,5 @@ __all__ = [
     "Snapshot",
     "ApiKey",
     "AIEvent",
+    "AIModelAssignment",
 ]
