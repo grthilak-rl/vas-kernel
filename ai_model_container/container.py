@@ -1,6 +1,7 @@
 """
 Phase 4.1 – AI Model IPC & Inference Contract
 Phase 4.2.3 – Model Onboarding & Discovery
+Phase 7 – Observability & Operational Controls
 
 AI MODEL CONTAINER ORCHESTRATION
 
@@ -18,17 +19,26 @@ PHASE 4.2.3 ADDITIONS:
 - model.yaml-based configuration
 - Fail-fast on GPU absence (when required)
 
+PHASE 7 SCOPE:
+- Heartbeat emission (periodic, best-effort)
+- Per-container metrics tracking (requests, errors, latency)
+- Liveness signaling for operational visibility
+- Non-blocking metrics collection
+- Silent failure on metrics errors
+
 WHAT THIS IS:
 - Container process wrapper
 - IPC server lifecycle coordinator
 - Signal handler for clean shutdown
 - Model configuration validator
+- Heartbeat emitter (Phase 7)
 
 WHAT THIS IS NOT:
-- Health monitoring
+- Health monitoring (read-only visibility only)
 - Multi-model management (one container = one model)
 - Hot-reload mechanism
 - Runtime configuration updates
+- Alerting or auto-restart system
 
 CONTAINER CARDINALITY (CRITICAL):
 - Exactly ONE container per model type
@@ -37,9 +47,13 @@ CONTAINER CARDINALITY (CRITICAL):
 - Containers serve multiple cameras concurrently
 """
 
+import json
 import signal
 import sys
+import threading
 import time
+from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from .inference_handler import InferenceHandler
@@ -121,6 +135,12 @@ class ModelContainer:
         self.model_id = model_id
         self._running = False
 
+        # Phase 7: Observability metrics (best-effort, non-blocking)
+        # CRITICAL: Metrics MUST NOT affect inference or container lifecycle
+        self._start_time = time.time()
+        self._heartbeat_thread: Optional[threading.Thread] = None
+        self._heartbeat_stop_event = threading.Event()
+
         # Phase 4.2.3: Try model discovery first
         discovered_config = None
         if models_dir is not None or model_config is None:
@@ -199,10 +219,13 @@ class ModelContainer:
         """
         Start the model container.
 
+        Phase 7: Also starts heartbeat emission thread.
+
         This method:
         1. Starts IPC server
         2. Registers signal handlers for graceful shutdown
-        3. Runs until stopped
+        3. Starts heartbeat emission (Phase 7, best-effort)
+        4. Runs until stopped
 
         This is a BLOCKING call. Container runs in foreground.
         """
@@ -217,6 +240,10 @@ class ModelContainer:
             # Start IPC server
             self.ipc_server.start()
             self._running = True
+
+            # Phase 7: Start heartbeat emission (best-effort, non-blocking)
+            # CRITICAL: Heartbeat thread MUST NOT block or affect inference
+            self._start_heartbeat_thread()
 
             print(f"Model container {self.model_id!r} is ready to serve requests")
             print("Press Ctrl+C to stop")
@@ -267,9 +294,14 @@ class ModelContainer:
         """
         Clean up container resources.
 
+        Phase 7: Also stops heartbeat emission.
+
         This is called during shutdown to ensure clean exit.
         """
         print(f"Cleaning up model container: {self.model_id}")
+
+        # Phase 7: Stop heartbeat thread (best-effort, non-blocking)
+        self._stop_heartbeat_thread()
 
         # Stop IPC server
         self.ipc_server.stop()
@@ -278,6 +310,169 @@ class ModelContainer:
         self.inference_handler.cleanup()
 
         print(f"Model container {self.model_id!r} stopped")
+
+    def _start_heartbeat_thread(self) -> None:
+        """
+        Phase 7: Start background heartbeat emission thread.
+
+        Emits periodic heartbeat to /tmp/vas_heartbeat_{model_id}.json
+        containing liveness and metrics information.
+
+        CRITICAL: This MUST be non-blocking and best-effort.
+        - Heartbeat failures are silently ignored
+        - Thread runs as daemon (won't prevent shutdown)
+        - No retry logic
+        - No alerts
+
+        Heartbeat interval: 5 seconds (configurable via environment variable)
+        """
+        try:
+            # Don't start if already running
+            if self._heartbeat_thread is not None and self._heartbeat_thread.is_alive():
+                return
+
+            self._heartbeat_stop_event.clear()
+            self._heartbeat_thread = threading.Thread(
+                target=self._heartbeat_loop,
+                name=f"heartbeat-{self.model_id}",
+                daemon=True  # Daemon thread won't prevent shutdown
+            )
+            self._heartbeat_thread.start()
+            print(f"Phase 7: Heartbeat emission started for model {self.model_id}")
+        except Exception as e:
+            # Phase 7: Silent failure - heartbeat errors must not affect container startup
+            print(f"WARNING: Failed to start heartbeat thread: {e}", file=sys.stderr)
+
+    def _stop_heartbeat_thread(self) -> None:
+        """
+        Phase 7: Stop background heartbeat emission thread.
+
+        CRITICAL: This MUST be non-blocking.
+        - No wait for in-flight heartbeat
+        - Signal thread to stop and return immediately
+        """
+        try:
+            if self._heartbeat_thread is not None and self._heartbeat_thread.is_alive():
+                self._heartbeat_stop_event.set()
+                # Don't join() - we want non-blocking shutdown
+                print(f"Phase 7: Heartbeat emission stopped for model {self.model_id}")
+        except Exception:
+            # Phase 7: Silent failure - heartbeat cleanup errors are ignored
+            pass
+
+    def _heartbeat_loop(self) -> None:
+        """
+        Phase 7: Background heartbeat emission loop.
+
+        Periodically emits heartbeat containing:
+        - model_id
+        - timestamp
+        - status (healthy/degraded/unknown)
+        - metrics (total_requests, total_errors, avg_latency_ms, uptime_seconds)
+
+        CRITICAL: This MUST NOT raise exceptions or block container operation.
+        All errors are silently handled.
+        """
+        # Get heartbeat interval from environment (default: 5 seconds)
+        import os
+        heartbeat_interval = int(os.environ.get("VAS_HEARTBEAT_INTERVAL_SECONDS", "5"))
+
+        while not self._heartbeat_stop_event.is_set():
+            try:
+                self._emit_heartbeat()
+            except Exception as e:
+                # Phase 7: Silent failure - heartbeat errors must not propagate
+                # Log to stderr for debugging but don't crash
+                print(f"WARNING: Heartbeat emission failed: {e}", file=sys.stderr)
+
+            # Sleep with interruptible wait
+            self._heartbeat_stop_event.wait(timeout=heartbeat_interval)
+
+    def _emit_heartbeat(self) -> None:
+        """
+        Phase 7: Emit single heartbeat to filesystem.
+
+        Writes heartbeat JSON to /tmp/vas_heartbeat_{model_id}.json
+
+        CRITICAL: This MUST be atomic and best-effort.
+        - Write to temp file first, then rename (atomic)
+        - Silent failure on errors
+        - No retry logic
+        """
+        try:
+            # Get metrics from inference handler (best-effort)
+            metrics = self._get_container_metrics()
+
+            # Build heartbeat payload
+            heartbeat = {
+                "model_id": self.model_id,
+                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "status": "healthy",  # Simple status for Phase 7
+                "metrics": metrics
+            }
+
+            # Write to temp file first (atomic write)
+            heartbeat_path = Path(f"/tmp/vas_heartbeat_{self.model_id}.json")
+            temp_path = Path(f"/tmp/.vas_heartbeat_{self.model_id}.json.tmp")
+
+            with temp_path.open("w") as f:
+                json.dump(heartbeat, f, indent=2)
+
+            # Atomic rename
+            temp_path.replace(heartbeat_path)
+
+        except Exception:
+            # Phase 7: Silent failure - heartbeat write errors are ignored
+            pass
+
+    def _get_container_metrics(self) -> dict:
+        """
+        Phase 7: Get container-level metrics for heartbeat.
+
+        Returns:
+            Dictionary containing:
+            - total_requests: Total inference requests processed
+            - total_errors: Total failed inferences
+            - avg_latency_ms: Average inference latency (milliseconds)
+            - uptime_seconds: Container uptime
+
+        CRITICAL: This is best-effort.
+        - Missing metrics return 0 or None
+        - Errors are silently handled
+        """
+        try:
+            uptime = time.time() - self._start_time
+
+            # Get metrics from inference handler (if available)
+            handler_metrics = {}
+            if hasattr(self.inference_handler, 'get_metrics'):
+                try:
+                    handler_metrics = self.inference_handler.get_metrics()
+                except Exception:
+                    pass
+
+            # Get metrics from IPC server (if available)
+            ipc_metrics = {}
+            if hasattr(self.ipc_server, 'get_metrics'):
+                try:
+                    ipc_metrics = self.ipc_server.get_metrics()
+                except Exception:
+                    pass
+
+            return {
+                "total_requests": handler_metrics.get("total_requests", 0) or ipc_metrics.get("total_requests", 0),
+                "total_errors": handler_metrics.get("total_errors", 0) or ipc_metrics.get("total_errors", 0),
+                "avg_latency_ms": handler_metrics.get("avg_latency_ms", 0.0),
+                "uptime_seconds": int(uptime)
+            }
+        except Exception:
+            # Phase 7: Silent failure - return empty metrics
+            return {
+                "total_requests": 0,
+                "total_errors": 0,
+                "avg_latency_ms": 0.0,
+                "uptime_seconds": 0
+            }
 
 
 # EXAMPLE USAGE (for testing and documentation):

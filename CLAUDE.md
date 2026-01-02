@@ -45,7 +45,9 @@ Phase 5.3 – Read-only Backend APIs: COMPLETED
 
 Phase 6.1 – Frontend Overlay Data Wiring: COMPLETED
 Phase 6.2 – Frontend Overlay Rendering: COMPLETED
-Phase 6.3 – Frontend UX Controls & Filters: ACTIVE
+Phase 6.3 – Frontend UX Controls & Filters: COMPLETED
+
+Phase 7 – Observability & Operational Controls: ACTIVE
 
 Only phases marked ACTIVE may be implemented.
 All other phases are FROZEN and must not be modified.
@@ -82,34 +84,45 @@ Do NOT tap frames:
 • inside WebRTC code
 
 ===============================
-PHASE 6.3 – FRONTEND UX CONTROLS & FILTERS (ACTIVE)
+PHASE 7 – OBSERVABILITY & OPERATIONAL CONTROLS (ACTIVE)
 ===============================
 
-Phase 6.3 introduces **user-controlled visualization controls** for AI overlays.
+Phase 7 introduces **visibility and safety instrumentation** for AI execution
+without altering video behavior or AI inference semantics.
 
-Phase 6.3 IS:
-• UI toggles to enable / disable AI overlays
-• Confidence threshold filtering (client-side only)
-• Per-model overlay visibility toggles (visual only)
-• Overlay styling controls (opacity, color, label visibility)
-• Local UI state or persisted user preferences
-• Purely frontend-side behavior
+Phase 7 IS:
+• Read-only metrics collection (FPS, drops, queue depth)
+• Per-camera and per-model health visibility
+• Model container heartbeat and liveness tracking
+• Backend health and status APIs (read-only)
+• Frontend observability panels (operator-facing)
+• Explicit unhealthy / degraded state surfacing
+• Manual, user-initiated operational actions (if any)
 
-Phase 6.3 IS NOT:
-• AI model selection for cameras
-• AI inference control or triggering
-• Backend API changes
-• Ruth AI Core interactions
-• Camera ↔ model subscription changes
-• Overlay rendering logic (Phase 6.2)
-• Data fetching logic (Phase 6.1)
+Phase 7 IS NOT:
+• AI inference logic
+• Video pipeline changes
+• Automatic remediation or recovery
+• Alerting or notification systems
+• Backend-side decision making
+• Auto-throttling or auto-pausing
+• Model loading or onboarding (Phase 4)
+• Camera ↔ model subscription control
+• UX overlay controls (Phase 6)
 
-Controls MUST:
-• Be optional and user-driven
-• Default to overlays OFF
-• Never affect AI execution or persistence
-• Never block video playback
-• Apply filters client-side only
+Observability MUST:
+• Be strictly read-only by default
+• Never affect video ingestion, playback, or recording
+• Never block or delay inference
+• Never introduce coupling between AI and VAS lifecycles
+• Fail silently without cascading effects
+
+Any operational control (if introduced) MUST:
+• Be explicit and user-triggered
+• Require confirmation
+• Never be automatic
+• Never affect the video pipeline
+• Be reversible and non-destructive
 
 ===============================
 FAILURE & ISOLATION (GLOBAL)
@@ -139,9 +152,9 @@ WHAT NOT TO IMPLEMENT (GLOBAL)
 • Network frame streaming
 • Backend API breaking changes
 • AI model selection UI
-• Model subscription management
-• Backend-side filtering or aggregation
-• Metrics, alerts, observability (until Phase 7)
+• Automatic operational decisions
+• Auto-restart or auto-throttling logic
+• Alerting or paging systems
 • Multi-host GPU orchestration
 
 ===============================

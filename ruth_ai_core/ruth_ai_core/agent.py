@@ -3,6 +3,7 @@ Phase 3.1 – Stream Agent Internal State Model
 Phase 3.2 – Subscription Model & Frame Binding
 Phase 3.3 – FPS Scheduling & Frame Selection
 Phase 3.4 – Failure & Restart Semantics
+Phase 7 – Observability & Operational Controls
 
 This module defines the StreamAgent abstraction.
 
@@ -27,12 +28,25 @@ PHASE 3.4 SCOPE:
 - Fail-closed behavior for invalid states
 - Explicit failure boundaries (no recovery, no retries)
 
+PHASE 7 SCOPE:
+- Read-only metrics collection (non-blocking, best-effort)
+- Per-subscription FPS and drop counters
+- Metrics exposed via get_metrics() (read-only)
+- No inference flow modification
+- Silent failure on metrics errors
+
 FAILURE SEMANTICS (PHASE 3.4):
 - Inactive subscription → frames silently skipped
 - Invalid subscription config → fail-closed (skip)
 - Frame source missing → StreamAgent idles (no error)
 - StreamAgent STOPPED → no dispatch decisions allowed
 - Ruth AI Core failure → MUST NOT affect VAS (isolated)
+
+FAILURE SEMANTICS (PHASE 7):
+- Metrics are best-effort and lossy
+- Metrics errors must be silently ignored
+- Missing metrics are acceptable
+- Never affect dispatch decisions or inference
 
 WHAT THIS IS NOT:
 - Not a thread or process
@@ -276,6 +290,7 @@ class StreamAgent:
     ) -> bool:
         """
         Phase 3.3: FPS gating decision logic.
+        Phase 7: Non-blocking metrics collection (drop counter).
 
         Determines whether a frame should be dispatched to a subscription
         based on the subscription's desired_fps constraint.
@@ -283,8 +298,8 @@ class StreamAgent:
         This is PURE DECISION LOGIC ONLY:
         - No frame access
         - No frame dispatch
-        - No side effects
-        - No state mutation
+        - No side effects (except best-effort metrics)
+        - No state mutation (except best-effort counters)
 
         FPS ENFORCEMENT RULES:
         - desired_fps is a MAXIMUM (cap, not target)
@@ -306,6 +321,11 @@ class StreamAgent:
         - If invalid FPS config → SKIP (fail-closed)
         - No recovery, no retries, no logging
 
+        PHASE 7 METRICS:
+        - If decision is SKIP → increment drop counter (best-effort)
+        - Metrics errors are silently ignored
+        - Metrics MUST NOT affect dispatch logic
+
         Args:
             subscription: The subscription to evaluate
             frame_id: Current frame identifier (monotonic)
@@ -322,10 +342,14 @@ class StreamAgent:
         # Phase 3.4: Defensive guard - STOPPED agents cannot make dispatch decisions
         # This enforces failure isolation: once stopped, agent is inert
         if self.state == AgentState.STOPPED:
+            # Phase 7: Track drop (best-effort, silent failure)
+            subscription._increment_drop_count()
             return False
 
         # Fail-closed: inactive subscriptions never receive frames
         if not subscription.active:
+            # Phase 7: Track drop (best-effort, silent failure)
+            subscription._increment_drop_count()
             return False
 
         # Get desired_fps from config (default: None = unlimited)
@@ -337,6 +361,8 @@ class StreamAgent:
 
         # Validate desired_fps (fail-closed on invalid config)
         if not isinstance(desired_fps, (int, float)) or desired_fps <= 0:
+            # Phase 7: Track drop (best-effort, silent failure)
+            subscription._increment_drop_count()
             return False
 
         # First frame for this subscription → always allow
@@ -353,7 +379,13 @@ class StreamAgent:
 
         # Allow dispatch if sufficient time has elapsed
         # Use >= to handle edge cases with exact timing
-        return elapsed >= min_interval_seconds
+        should_allow = elapsed >= min_interval_seconds
+
+        # Phase 7: Track drop if frame is skipped (best-effort, silent failure)
+        if not should_allow:
+            subscription._increment_drop_count()
+
+        return should_allow
 
     def record_dispatch(
         self,
@@ -363,6 +395,7 @@ class StreamAgent:
     ) -> None:
         """
         Phase 3.3: Record that a frame was dispatched to a subscription.
+        Phase 7: Non-blocking metrics collection (dispatch counter).
 
         This method updates the subscription's dispatch state after a
         successful dispatch decision.
@@ -377,6 +410,11 @@ class StreamAgent:
         - If StreamAgent is STOPPED → silently ignore (no-op)
         - If subscription is inactive → silently ignore (no-op)
         - No exceptions raised, no recovery, no logging
+
+        PHASE 7 METRICS:
+        - Increment dispatch counter (best-effort)
+        - Metrics errors are silently ignored
+        - Metrics MUST NOT affect state updates
 
         Args:
             subscription: The subscription that received the frame
@@ -396,6 +434,55 @@ class StreamAgent:
         # Update subscription dispatch state
         subscription.last_dispatched_frame_id = frame_id
         subscription.last_dispatch_timestamp = frame_timestamp
+
+        # Phase 7: Track successful dispatch (best-effort, silent failure)
+        subscription._increment_dispatch_count()
+
+    def get_metrics(self) -> Dict[str, Any]:
+        """
+        Phase 7: Get read-only observability metrics for this StreamAgent.
+
+        Returns per-subscription metrics and agent-level state.
+
+        Returns:
+            Dictionary containing:
+            - camera_id: The camera identifier
+            - state: Current agent state (CREATED, RUNNING, STOPPED)
+            - subscriptions: List of per-subscription metrics
+            - subscription_count: Total number of subscriptions
+
+        CRITICAL: This is read-only and best-effort.
+        Missing or stale metrics are acceptable.
+        Errors must be silently handled.
+        """
+        try:
+            subscription_metrics = []
+            for model_id, subscription in self._subscriptions.items():
+                try:
+                    # Get per-subscription metrics (best-effort)
+                    sub_metrics = subscription.get_metrics()
+                    sub_metrics["model_id"] = model_id
+                    sub_metrics["camera_id"] = self.camera_id
+                    sub_metrics["active"] = subscription.active
+                    subscription_metrics.append(sub_metrics)
+                except Exception:
+                    # Phase 7: Silent failure for individual subscription metrics
+                    pass
+
+            return {
+                "camera_id": self.camera_id,
+                "state": self.state.value,
+                "subscription_count": self.subscription_count,
+                "subscriptions": subscription_metrics,
+            }
+        except Exception:
+            # Phase 7: Silent failure - return minimal metrics on error
+            return {
+                "camera_id": self.camera_id,
+                "state": "unknown",
+                "subscription_count": 0,
+                "subscriptions": [],
+            }
 
     def __repr__(self) -> str:
         """String representation for debugging."""

@@ -2,6 +2,7 @@
 Phase 4.1 – AI Model IPC & Inference Contract (FROZEN)
 Phase 4.2.1 – Real Model Loading & GPU Initialization (COMPLETED)
 Phase 4.2.2 – Frame Access, Preprocessing & Real Inference Execution (ACTIVE)
+Phase 7 – Observability & Operational Controls
 
 STATELESS INFERENCE HANDLER
 
@@ -24,6 +25,13 @@ PHASE 4.2.2 SCOPE (ACTIVE):
 - NV12 format preprocessing
 - Real model inference on actual frames
 - Model-specific post-processing (NMS, thresholding)
+
+PHASE 7 SCOPE:
+- Non-blocking metrics collection (best-effort)
+- Per-handler request and error counters
+- Latency tracking (average inference time)
+- Metrics exposed via get_metrics() (read-only)
+- Silent failure on metrics errors
 
 WHAT THIS IS:
 - Inference request handler (with real model and frames)
@@ -143,6 +151,14 @@ class InferenceHandler:
         # Thread safety: lock for model inference
         # (Some frameworks are not thread-safe, lock ensures safety)
         self._inference_lock = threading.Lock()
+
+        # Phase 7: Observability metrics (best-effort, non-blocking)
+        # CRITICAL: Metrics MUST NOT affect inference flow
+        # All metric updates must be wrapped in try/except and silently fail
+        self._total_requests = 0
+        self._total_errors = 0
+        self._total_latency_ms = 0.0
+        self._metrics_lock = threading.Lock()
 
         # Load model
         print(f"Loading model {self.model_id!r}...")
@@ -328,6 +344,7 @@ class InferenceHandler:
         - Handler MUST NOT raise exceptions (catch and return error)
 
         PHASE 4.2.1: Now performs REAL inference using loaded model.
+        PHASE 7: Non-blocking metrics tracking (best-effort).
 
         Args:
             request: InferenceRequest containing frame reference and metadata
@@ -336,10 +353,12 @@ class InferenceHandler:
             InferenceResponse containing detections or error
         """
         start_time = time.time()
+        is_error = False
 
         try:
             # Validate frame reference (fail-fast on invalid input)
             if not self._validate_frame_reference(request.frame_reference):
+                is_error = True
                 return InferenceResponse(
                     model_id=self.model_id,
                     camera_id=request.camera_id,
@@ -373,6 +392,7 @@ class InferenceHandler:
         except Exception as e:
             # Catch all exceptions and return error response
             # NEVER raise exceptions from handler
+            is_error = True
             return InferenceResponse(
                 model_id=self.model_id,
                 camera_id=request.camera_id,
@@ -381,6 +401,12 @@ class InferenceHandler:
                 error=f"Inference exception: {str(e)}",
                 metadata={"exception_type": type(e).__name__, "device": self._device}
             )
+
+        finally:
+            # Phase 7: Update metrics (best-effort, non-blocking)
+            # CRITICAL: Metrics errors MUST NOT propagate or affect inference
+            inference_time_ms = (time.time() - start_time) * 1000
+            self._update_metrics(inference_time_ms, is_error)
 
     def _validate_frame_reference(self, frame_reference: str) -> bool:
         """
@@ -766,6 +792,70 @@ class InferenceHandler:
         except Exception as e:
             print(f"WARNING: Post-processing failed: {e}")
             return []
+
+    def _update_metrics(self, inference_time_ms: float, is_error: bool) -> None:
+        """
+        Phase 7: Update observability metrics (best-effort, non-blocking).
+
+        Args:
+            inference_time_ms: Inference latency in milliseconds
+            is_error: True if this request resulted in an error
+
+        CRITICAL: This MUST NOT raise exceptions or affect inference.
+        All errors are silently ignored.
+        """
+        try:
+            with self._metrics_lock:
+                self._total_requests += 1
+                if is_error:
+                    self._total_errors += 1
+                # Running average of latency
+                self._total_latency_ms += inference_time_ms
+        except Exception:
+            # Phase 7: Silent failure - metrics errors must not propagate
+            pass
+
+    def get_metrics(self) -> dict:
+        """
+        Phase 7: Get read-only observability metrics for this handler.
+
+        Returns:
+            Dictionary containing:
+            - total_requests: Total inference requests processed
+            - total_errors: Total failed inferences
+            - avg_latency_ms: Average inference latency (milliseconds)
+            - error_rate: Percentage of failed requests (0.0-1.0)
+
+        CRITICAL: This is read-only and best-effort.
+        Missing or stale metrics are acceptable.
+        Errors must be silently handled.
+        """
+        try:
+            with self._metrics_lock:
+                total_requests = self._total_requests
+                total_errors = self._total_errors
+                total_latency_ms = self._total_latency_ms
+
+            # Calculate average latency
+            avg_latency_ms = (total_latency_ms / total_requests) if total_requests > 0 else 0.0
+
+            # Calculate error rate
+            error_rate = (total_errors / total_requests) if total_requests > 0 else 0.0
+
+            return {
+                "total_requests": total_requests,
+                "total_errors": total_errors,
+                "avg_latency_ms": round(avg_latency_ms, 2),
+                "error_rate": round(error_rate, 4)
+            }
+        except Exception:
+            # Phase 7: Silent failure - return empty metrics on error
+            return {
+                "total_requests": 0,
+                "total_errors": 0,
+                "avg_latency_ms": 0.0,
+                "error_rate": 0.0
+            }
 
     def cleanup(self) -> None:
         """
