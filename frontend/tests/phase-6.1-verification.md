@@ -44,6 +44,7 @@ Phase 5.2 – Snapshot / Clip Triggers: COMPLETED
 Phase 5.3 – Read-only Backend APIs: COMPLETED
 
 Phase 6.1 – Frontend Overlay Data Wiring: COMPLETED
+Phase 6.2 – Overlay Rendering: ACTIVE
 
 Only phases marked ACTIVE may be implemented.
 All other phases are FROZEN and must not be modified.
@@ -80,24 +81,33 @@ Do NOT tap frames:
 • inside WebRTC code
 
 ===============================
-PHASE 6.1 – FRONTEND OVERLAY DATA WIRING (ACTIVE)
+PHASE 6.2 – OVERLAY RENDERING (ACTIVE)
 ===============================
 
-Phase 6.1 introduces **frontend-side consumption of AI event data**.
+Phase 6.2 introduces **visual rendering of AI inference results** on top of video streams.
 
-Phase 6.1 IS:
-• Fetching AI events from Phase 5.3 APIs
-• Client-side state management for AI events
-• Data binding between video streams and AI metadata
-• Passive data wiring only (no rendering logic)
+Phase 6.2 IS:
+• Rendering bounding boxes, labels, and markers from AI event data
+• Client-side overlay layers (Canvas / SVG / DOM-based)
+• Read-only consumption of Phase 6.1 AI event state
+• Timeline-aligned visualization of detections
+• Model-agnostic rendering primitives
 
-Phase 6.1 IS NOT:
-• Overlay rendering (Phase 6.2)
-• Bounding box drawing
-• UI controls or filters (Phase 6.3)
-• Model selection or subscriptions
+Phase 6.2 IS NOT:
+• AI event fetching (Phase 6.1)
 • Backend API changes
-• Any AI inference logic
+• Snapshot or clip triggering
+• Model execution or inference
+• Model selection or subscriptions
+• UX controls or filters (Phase 6.3)
+• Persistence or analytics
+
+Overlays MUST:
+• Be purely visual
+• Never affect video playback
+• Never block rendering or decoding
+• Fail silently if data is missing or malformed
+• Degrade gracefully when AI events are unavailable
 
 ===============================
 FAILURE & ISOLATION (GLOBAL)
@@ -126,8 +136,7 @@ WHAT NOT TO IMPLEMENT (GLOBAL)
 • AI inference inside VAS
 • Network frame streaming
 • Backend API breaking changes
-• Overlay rendering (until Phase 6.2)
-• UX controls (until Phase 6.3)
+• UX controls or filters (until Phase 6.3)
 • Metrics, alerts, observability (until Phase 7)
 • Multi-host GPU orchestration
 

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import DualModePlayer, { DualModePlayerRef } from '@/components/players/DualModePlayer';
+import { StreamWithAIData } from '@/components/streams/StreamWithAIData';
 import { getDevices, Device, captureBookmarkLive, captureBookmarkHistorical } from '@/lib/api';
 import { CameraIcon, VideoCameraIcon, PlayIcon, StopIcon } from '@heroicons/react/24/outline';
 
@@ -438,14 +439,15 @@ export default function StreamsPage() {
             <div key={device.id} className="bg-white shadow-sm rounded-lg border border-gray-200 overflow-hidden">
               {/* Video Player Area */}
               <div className="aspect-video bg-gray-900 relative">
-                <DualModePlayer
-                  ref={(el) => { playerRefs.current[device.id] = el; }}
+                {/* Phase 6.1: StreamWithAIData wraps DualModePlayer with AI event fetching */}
+                <StreamWithAIData
                   deviceId={device.id}
                   deviceName={device.name}
                   shouldConnect={activeStreams[device.id] || false}
                   onModeChange={(mode) => {
                     setPlayerModes(prev => ({ ...prev, [device.id]: mode }));
                   }}
+                  playerRef={(el) => { playerRefs.current[device.id] = el; }}
                 />
                 {!device.is_active && !activeStreams[device.id] && (
                   <>

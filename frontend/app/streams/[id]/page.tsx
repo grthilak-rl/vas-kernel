@@ -4,6 +4,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import WebRTCPlayer from '@/components/players/WebRTCPlayer';
 import { getDevices, Device, startStream } from '@/lib/api';
+import { useAIEvents } from '@/hooks/useAIEvents';
 
 export default function StreamViewPage() {
   const params = useParams();
@@ -12,6 +13,16 @@ export default function StreamViewPage() {
   const [device, setDevice] = useState<Device | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Phase 6.1: Fetch AI events for this stream (live mode only, with polling)
+  const { events: aiEvents, loading: aiLoading, error: aiError } = useAIEvents({
+    cameraId: device?.is_active ? deviceId : undefined, // Only fetch when stream is active
+    enablePolling: true,
+    pollingInterval: 5000, // 5 seconds
+    startTime: new Date(Date.now() - 30000).toISOString(), // Last 30 seconds
+    endTime: new Date().toISOString(),
+    limit: 50,
+  });
 
   useEffect(() => {
     // Fetch device details
@@ -34,6 +45,17 @@ export default function StreamViewPage() {
 
     fetchDevice();
   }, [deviceId]);
+
+  // Phase 6.1: Log AI events for debugging (data wiring demonstration)
+  useEffect(() => {
+    if (aiEvents.length > 0) {
+      console.log(`[Phase 6.1] AI events for device ${deviceId}:`, {
+        count: aiEvents.length,
+        latestTimestamp: aiEvents[0]?.timestamp,
+        events: aiEvents.slice(0, 3), // Log first 3 events
+      });
+    }
+  }, [aiEvents, deviceId]);
 
   if (loading) {
     return (
@@ -115,7 +137,7 @@ export default function StreamViewPage() {
           <div>
             <h3 className="text-lg font-semibold mb-2 text-gray-900">Controls</h3>
             <div className="space-y-2">
-              <button 
+              <button
                 onClick={() => router.push('/devices')}
                 className="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md text-sm font-medium"
               >
@@ -124,6 +146,39 @@ export default function StreamViewPage() {
             </div>
           </div>
         </div>
+
+        {/* Phase 6.1: AI Event Data Status (debug panel) */}
+        {device.is_active && (
+          <div className="mt-6 border-t border-gray-200 pt-6">
+            <h3 className="text-lg font-semibold mb-3 text-gray-900">AI Event Data (Phase 6.1)</h3>
+            <div className="bg-gray-50 rounded-lg p-4 space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-600">AI Events Fetched:</span>
+                <span className="font-mono font-medium text-gray-900">
+                  {aiEvents.length} events
+                </span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-600">Polling Status:</span>
+                <span className="inline-flex items-center">
+                  <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse mr-2"></span>
+                  <span className="text-gray-900">Active (5s interval)</span>
+                </span>
+              </div>
+              {aiEvents.length > 0 && (
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-600">Latest Event:</span>
+                  <span className="font-mono text-xs text-gray-700">
+                    {new Date(aiEvents[0].timestamp).toLocaleString()}
+                  </span>
+                </div>
+              )}
+              <div className="text-xs text-gray-500 mt-3 italic">
+                Phase 6.1: Data wiring complete. Overlay rendering in Phase 6.2.
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
