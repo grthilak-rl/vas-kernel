@@ -5,6 +5,7 @@ Phase 3.1 – Stream Agent Internal State Model
 Phase 3.2 – Subscription Model & Frame Binding
 Phase 3.3 – FPS Scheduling & Frame Selection
 Phase 3.4 – Failure & Restart Semantics
+Phase 8.2 – Ruth AI Core Subscription Reconciliation
 
 This package defines the core abstractions for Ruth AI Core,
 an independent AI orchestration service that consumes frames
@@ -26,6 +27,12 @@ PHASE 3.4 ADDITIONS:
 - Fail-closed behavior for invalid states
 - Explicit failure isolation (no recovery, no retries)
 
+PHASE 8.2 EXPORTS:
+- AssignmentClient: Backend API client for fetching assignment intent
+- AgentRegistry: StreamAgent lifecycle management
+- ReconciliationEngine: Subscription reconciliation logic
+- ReconciliationService: Periodic reconciliation service
+
 FAILURE ISOLATION (PHASE 3.4):
 - StreamAgent failure affects only that camera
 - Subscription failure affects only that model
@@ -46,11 +53,19 @@ This is decision logic only, not execution.
 from .agent import StreamAgent
 from .subscription import Subscription
 from .types import AgentState
+from .assignment_client import AssignmentClient
+from .agent_registry import AgentRegistry
+from .reconciliation import ReconciliationEngine
+from .reconciliation_service import ReconciliationService
 
 __all__ = [
     "StreamAgent",
     "AgentState",
     "Subscription",
+    "AssignmentClient",
+    "AgentRegistry",
+    "ReconciliationEngine",
+    "ReconciliationService",
 ]
 
-__version__ = "0.3.1-phase3.4"
+__version__ = "0.4.0-phase8.2"

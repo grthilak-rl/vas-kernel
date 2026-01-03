@@ -49,7 +49,8 @@ Phase 6.3 – Frontend UX Controls & Filters: COMPLETED
 
 Phase 7 – Observability & Operational Controls: COMPLETED
 
-Phase 8.1 – Backend Model Assignment APIs: ACTIVE
+Phase 8.1 – Backend Model Assignment APIs: COMPLETED
+Phase 8.2 – Ruth AI Core Subscription Reconciliation: ACTIVE
 
 Only phases marked ACTIVE may be implemented.
 All other phases are FROZEN and must not be modified.
@@ -86,36 +87,37 @@ Do NOT tap frames:
 • inside WebRTC code
 
 ===============================
-PHASE 8.1 – BACKEND MODEL ASSIGNMENT APIS (ACTIVE)
+PHASE 8.2 – RUTH AI CORE SUBSCRIPTION RECONCILIATION (ACTIVE)
 ===============================
 
-Phase 8.1 introduces **authoritative backend APIs** to record
-camera ↔ AI model assignment intent.
+Phase 8.2 introduces **execution reconciliation** inside Ruth AI Core.
 
-Phase 8.1 IS:
-• Backend control-plane APIs for assigning models to cameras
-• Persistent storage of camera ↔ model intent
-• Support for multiple models per camera
-• Read/write APIs limited strictly to assignment state
-• No execution or reconciliation logic
-• No Ruth AI Core behavior changes
+Phase 8.2 IS:
+• Reading assignment intent from Phase 8.1 backend APIs
+• Reconciling desired camera ↔ model state with StreamAgents
+• Creating subscriptions for newly enabled assignments
+• Removing subscriptions for disabled or deleted assignments
+• Updating desired_fps / priority / parameters on existing subscriptions
+• Best-effort, idempotent reconciliation loops
+• Control-plane driven execution changes ONLY
 
-Phase 8.1 IS NOT:
-• AI inference execution
-• StreamAgent reconciliation (Phase 8.2)
-• Model container lifecycle control
-• Frontend UI (Phase 8.3)
-• Overlay behavior (Phase 6)
-• Snapshot / clip logic
-• Observability changes (Phase 7)
+Phase 8.2 IS NOT:
+• Backend persistence changes
+• Model container lifecycle management
+• Frontend UI or UX
+• Overlay rendering or controls
+• Snapshot or clip logic
+• Observability or alerting logic
+• Automatic retries or recovery
+• Hard real-time guarantees
 
-Assignment APIs MUST:
-• Be explicit and user-driven
-• Persist intent durably
-• Be idempotent and deterministic
-• Never start, stop, or affect running inference
-• Never communicate directly with model containers
-• Never block or affect video or AI pipelines
+Reconciliation MUST:
+• Be driven by backend assignment state only
+• Be idempotent and repeatable
+• Tolerate partial failures
+• Never block video ingestion or playback
+• Never assume model containers are healthy
+• Fail silently and converge eventually
 
 ===============================
 FAILURE & ISOLATION (GLOBAL)
@@ -129,7 +131,7 @@ Inherited from Phase 3.4 and applies globally:
 • Bad frame → request fails, no retry
 
 The system MUST NOT:
-• Retry inference
+• Retry inference automatically
 • Buffer frames
 • Coordinate restarts
 • Perform recovery logic
@@ -143,12 +145,12 @@ WHAT NOT TO IMPLEMENT (GLOBAL)
 • Modifying existing VAS video paths
 • AI inference inside VAS
 • Network frame streaming
-• Backend API breaking changes outside Phase 8.1
-• StreamAgent reconciliation logic
-• Model container lifecycle control
+• Backend API changes
 • Frontend UI or UX changes
-• Automatic execution or enforcement
-• Metrics, alerts, or observability changes
+• Model onboarding or loading logic
+• Model container lifecycle control
+• Observability or metrics changes
+• Alerting or notification systems
 • Multi-host GPU orchestration
 
 ===============================

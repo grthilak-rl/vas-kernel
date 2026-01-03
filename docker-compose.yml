@@ -81,6 +81,7 @@ services:
       AI_FRAME_EXPORT_ENABLED: "false"  # Set to "true" to enable decoded frame export
     volumes:
       - ./backend:/app
+      - ./ruth_ai_core:/app/ruth_ai_core
       - recordings:/app/recordings
       - snapshots:/app/snapshots
     depends_on:

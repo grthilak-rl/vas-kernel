@@ -17,6 +17,12 @@ import websockets
 # Add current directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Phase 8.2: Add ruth_ai_core to path
+# In Docker, ruth_ai_core is mounted at /app/ruth_ai_core
+ruth_ai_core_path = "/app/ruth_ai_core"
+if os.path.exists(ruth_ai_core_path) and ruth_ai_core_path not in sys.path:
+    sys.path.insert(0, ruth_ai_core_path)
+
 from config.logging_config import setup_logging
 from database import engine, Base
 from loguru import logger
@@ -30,17 +36,32 @@ logger = setup_logging()
 async def lifespan(app: FastAPI):
     """Lifespan events for application startup and shutdown."""
     logger.info("Starting VAS Backend Application...")
-    
+
     # Create database tables
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    
+
     logger.info("Database tables created/verified")
+
+    # Phase 8.2: Initialize and start Ruth AI Core reconciliation
+    from app.services.reconciliation_service_manager import reconciliation_manager
+
+    reconciliation_initialized = await reconciliation_manager.initialize()
+    if reconciliation_initialized:
+        reconciliation_manager.start()
+        logger.info("Ruth AI Core reconciliation service started (Phase 8.2)")
+    else:
+        logger.warning("Ruth AI Core reconciliation service not started (Phase 8.2)")
+
     logger.info("VAS Backend Application started successfully")
-    
+
     yield
-    
+
     logger.info("Shutting down VAS Backend Application...")
+
+    # Phase 8.2: Stop Ruth AI Core reconciliation
+    await reconciliation_manager.stop()
+
     await engine.dispose()
 
 # Create FastAPI app
