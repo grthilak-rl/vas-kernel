@@ -50,7 +50,8 @@ Phase 6.3 – Frontend UX Controls & Filters: COMPLETED
 Phase 7 – Observability & Operational Controls: COMPLETED
 
 Phase 8.1 – Backend Model Assignment APIs: COMPLETED
-Phase 8.2 – Ruth AI Core Subscription Reconciliation: ACTIVE
+Phase 8.2 – Ruth AI Core Subscription Reconciliation: COMPLETED
+Phase 8.3 – Frontend Model Selection UI: ACTIVE
 
 Only phases marked ACTIVE may be implemented.
 All other phases are FROZEN and must not be modified.
@@ -87,37 +88,38 @@ Do NOT tap frames:
 • inside WebRTC code
 
 ===============================
-PHASE 8.2 – RUTH AI CORE SUBSCRIPTION RECONCILIATION (ACTIVE)
+PHASE 8.3 – FRONTEND MODEL SELECTION UI (ACTIVE)
 ===============================
 
-Phase 8.2 introduces **execution reconciliation** inside Ruth AI Core.
+Phase 8.3 introduces the **final control-plane UI** for AI execution.
 
-Phase 8.2 IS:
-• Reading assignment intent from Phase 8.1 backend APIs
-• Reconciling desired camera ↔ model state with StreamAgents
-• Creating subscriptions for newly enabled assignments
-• Removing subscriptions for disabled or deleted assignments
-• Updating desired_fps / priority / parameters on existing subscriptions
-• Best-effort, idempotent reconciliation loops
-• Control-plane driven execution changes ONLY
+Phase 8.3 IS:
+• Frontend UI to view available AI models
+• Frontend UI to view per-camera model assignments
+• User-driven enable / disable of models per camera
+• Configuration of assignment intent (fps, priority, parameters)
+• Calls ONLY Phase 8.1 backend assignment APIs
+• Read-only visibility into current assignment state
+• Control-plane UI only (intent management)
 
-Phase 8.2 IS NOT:
-• Backend persistence changes
-• Model container lifecycle management
-• Frontend UI or UX
-• Overlay rendering or controls
-• Snapshot or clip logic
-• Observability or alerting logic
-• Automatic retries or recovery
-• Hard real-time guarantees
+Phase 8.3 IS NOT:
+• AI inference logic
+• Model container lifecycle control
+• Direct interaction with Ruth AI Core
+• Subscription reconciliation logic (Phase 8.2)
+• Overlay rendering or visualization (Phase 6)
+• Observability or metrics (Phase 7)
+• Snapshot, clip, or violation logic
+• Analytics or reporting
 
-Reconciliation MUST:
-• Be driven by backend assignment state only
-• Be idempotent and repeatable
-• Tolerate partial failures
-• Never block video ingestion or playback
-• Never assume model containers are healthy
-• Fail silently and converge eventually
+Frontend MUST:
+• Treat backend as the source of truth
+• Never assume execution state
+• Never talk to model containers
+• Never start or stop inference directly
+• Never affect video playback or ingestion
+• Fail silently on errors
+• Be fully optional and non-blocking
 
 ===============================
 FAILURE & ISOLATION (GLOBAL)
@@ -146,11 +148,12 @@ WHAT NOT TO IMPLEMENT (GLOBAL)
 • AI inference inside VAS
 • Network frame streaming
 • Backend API changes
-• Frontend UI or UX changes
+• Reconciliation or execution logic
 • Model onboarding or loading logic
 • Model container lifecycle control
 • Observability or metrics changes
 • Alerting or notification systems
+• Business analytics or violation reports
 • Multi-host GPU orchestration
 
 ===============================

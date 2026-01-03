@@ -2,20 +2,22 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { 
-  HomeIcon, 
-  CameraIcon, 
-  FilmIcon, 
+import {
+  HomeIcon,
+  CameraIcon,
+  FilmIcon,
   BookmarkIcon,
   PhotoIcon,
   CogIcon,
-  ChartBarIcon 
+  ChartBarIcon,
+  CubeIcon
 } from '@heroicons/react/24/outline';
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: HomeIcon },
   { name: 'Devices', href: '/devices', icon: CameraIcon },
   { name: 'Streams', href: '/streams', icon: FilmIcon },
+  { name: 'AI Models', href: '/ai-models', icon: CubeIcon },
   { name: 'Snapshots', href: '/snapshots', icon: PhotoIcon },
   { name: 'Bookmarks', href: '/bookmarks', icon: BookmarkIcon },
   { name: 'Analytics', href: '/analytics', icon: ChartBarIcon },
