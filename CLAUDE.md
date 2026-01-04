@@ -38,6 +38,8 @@ Phase 3.4 – Failure & Restart Semantics: COMPLETED
 
 Phase 4.1 – AI Model IPC & Inference Contract: COMPLETED
 Phase 4.2 – AI Model Runtime & Onboarding: COMPLETED
+Phase 4.3 – Ruth AI Core Integration & Routing: COMPLETED
+Phase 4.4 – Ruth AI Model Runtime Base Image: COMPLETED
 
 Phase 5.1 – AI Event Schema + Persistence: COMPLETED
 Phase 5.2 – Snapshot / Clip Triggers: COMPLETED
@@ -51,81 +53,16 @@ Phase 7 – Observability & Operational Controls: COMPLETED
 
 Phase 8.1 – Backend Model Assignment APIs: COMPLETED
 Phase 8.2 – Ruth AI Core Subscription Reconciliation: COMPLETED
-Phase 8.3 – Frontend Model Selection UI: ACTIVE
+Phase 8.3 – Frontend Model Selection UI: COMPLETED
 
 Only phases marked ACTIVE may be implemented.
 All other phases are FROZEN and must not be modified.
 
 ===============================
-FEATURE FLAGS (MANDATORY)
-===============================
-
-All Phase 1 and Phase 2 logic MUST be guarded by:
-
-AI_FRAME_EXPORT_ENABLED=false
-
-When false:
-• No frame buffers allocated
-• No shared memory created
-• No frame copies
-• Zero overhead
-
-===============================
-ARCHITECTURE (NON-NEGOTIABLE)
-===============================
-
-Frame tap point is ONLY at the FFmpeg decode boundary:
-
-RTSP → FFmpeg decode → RAW FRAME
-                         ├── Recording (existing)
-                         ├── MediaSoup Producer (existing)
-                         └── Kernel Frame Path (Phase 1 / Phase 2)
-
-Do NOT tap frames:
-• after MediaSoup
-• after recording
-• inside AI code
-• inside WebRTC code
-
-===============================
-PHASE 8.3 – FRONTEND MODEL SELECTION UI (ACTIVE)
-===============================
-
-Phase 8.3 introduces the **final control-plane UI** for AI execution.
-
-Phase 8.3 IS:
-• Frontend UI to view available AI models
-• Frontend UI to view per-camera model assignments
-• User-driven enable / disable of models per camera
-• Configuration of assignment intent (fps, priority, parameters)
-• Calls ONLY Phase 8.1 backend assignment APIs
-• Read-only visibility into current assignment state
-• Control-plane UI only (intent management)
-
-Phase 8.3 IS NOT:
-• AI inference logic
-• Model container lifecycle control
-• Direct interaction with Ruth AI Core
-• Subscription reconciliation logic (Phase 8.2)
-• Overlay rendering or visualization (Phase 6)
-• Observability or metrics (Phase 7)
-• Snapshot, clip, or violation logic
-• Analytics or reporting
-
-Frontend MUST:
-• Treat backend as the source of truth
-• Never assume execution state
-• Never talk to model containers
-• Never start or stop inference directly
-• Never affect video playback or ingestion
-• Fail silently on errors
-• Be fully optional and non-blocking
-
-===============================
 FAILURE & ISOLATION (GLOBAL)
 ===============================
 
-Inherited from Phase 3.4 and applies globally:
+Inherited rules apply unchanged:
 • VAS failure → outside AI scope
 • AI Core failure → VAS unaffected
 • Model container failure → isolated
@@ -147,11 +84,11 @@ WHAT NOT TO IMPLEMENT (GLOBAL)
 • Modifying existing VAS video paths
 • AI inference inside VAS
 • Network frame streaming
-• Backend API changes
-• Reconciliation or execution logic
-• Model onboarding or loading logic
-• Model container lifecycle control
-• Observability or metrics changes
+• Backend API changes (unless explicitly allowed)
+• Reconciliation or execution logic (unless explicitly allowed)
+• Model onboarding or loading logic (unless explicitly allowed)
+• Model container lifecycle control (unless explicitly allowed)
+• Observability or metrics changes (unless explicitly allowed)
 • Alerting or notification systems
 • Business analytics or violation reports
 • Multi-host GPU orchestration

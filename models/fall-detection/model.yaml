@@ -1,0 +1,36 @@
+# Fall Detection Model Configuration
+# Phase 4.4 - Example model.yaml for container using runtime base image
+
+model_id: fall-detection
+model_name: Fall Detection
+model_version: 1.0.0
+
+description: Detects falls using pose estimation and temporal analysis
+author: VAS AI Platform
+license: Proprietary
+
+supported_tasks:
+  - fall_detection
+  - pose_estimation
+
+input_format: NV12
+
+expected_resolution: [640, 480]
+
+resource_requirements:
+  gpu_required: false
+  gpu_memory_mb: 2048
+  cpu_fallback_allowed: true
+
+model_type: pytorch
+
+model_weights: /app/weights/fall_detection_model.pt
+
+confidence_threshold: 0.6
+
+output_schema:
+  type: fall_detection
+  format: bbox
+  classes: 1
+  class_names:
+    - fall

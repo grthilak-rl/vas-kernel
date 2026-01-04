@@ -92,15 +92,15 @@ Containers MUST NOT:
 
 ```
 Ruth AI Core                          Model Container
-     |                                      |
+     |                                     |
      |--- connect(UDS) ------------------→ |
-     |                                      |
+     |                                     |
      |--- send([length][request JSON]) --→ |
-     |                                      |
+     |                                     |
      |                              [Process inference]
-     |                                      |
+     |                                     |
      |← -- send([length][response JSON]) --|
-     |                                      |
+     |                                     |
      |--- close() -----------------------→ |
 ```
 
@@ -137,13 +137,13 @@ Ruth AI Core                          Model Container
 
 ### Mandatory Fields
 
-| Field             | Type   | Description                              |
-|-------------------|--------|------------------------------------------|
-| `frame_reference` | string | Path to frame (READ-ONLY)                |
+| Field             | Type   | Description                               |
+|-------------------|--------|-------------------------------------------|
+| `frame_reference` | string | Path to frame (READ-ONLY)                 |
 | `frame_metadata`  | object | Frame header (width, height, format, etc.)|
-| `camera_id`       | string | Source camera identifier                 |
-| `model_id`        | string | Target model identifier                  |
-| `timestamp`       | float  | Request timestamp (Unix seconds)         |
+| `camera_id`       | string | Source camera identifier                  |
+| `model_id`        | string | Target model identifier                   |
+| `timestamp`       | float  | Request timestamp (Unix seconds)          |
 
 ### Optional Fields
 

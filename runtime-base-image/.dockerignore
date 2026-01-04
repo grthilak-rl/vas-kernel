@@ -1,0 +1,50 @@
+# Phase 4.4 - Runtime Base Image .dockerignore
+#
+# Exclude files not needed in the runtime base image
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Documentation
+*.md
+README*
+CHANGELOG*
+LICENSE*
+
+# Test files
+test_*.py
+*_test.py
+tests/
+
+# Examples
+example_*.py
+examples/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Other
+*.log
+.DS_Store
