@@ -179,7 +179,7 @@ async def root():
     }
 
 # API routes
-from app.routes import devices, streams, mediasoup, rtsp_pipeline, recordings, websocket, snapshots, bookmarks, api_keys, ruth_ai_compat, ai_events, ai_observability, ai_model_assignments
+from app.routes import devices, streams, mediasoup, rtsp_pipeline, recordings, websocket, snapshots, bookmarks, api_keys, ruth_ai_compat, ai_events, ai_observability, ai_model_assignments, ai_models
 
 app.include_router(devices.router)
 app.include_router(streams.router)
@@ -192,6 +192,7 @@ app.include_router(bookmarks.router)
 app.include_router(api_keys.router)
 app.include_router(ruth_ai_compat.router)
 app.include_router(ai_events.router)  # Phase 5.3: AI Events Read APIs
+app.include_router(ai_models.router)  # Phase 5.4: AI Model Registry & Discovery APIs
 app.include_router(ai_observability.router)  # Phase 7: AI Observability & Health APIs
 app.include_router(ai_model_assignments.router)  # Phase 8.1: Backend Model Assignment APIs
 

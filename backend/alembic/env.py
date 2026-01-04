@@ -6,7 +6,7 @@ from config import settings
 
 # Import base and models
 from database import Base
-from app.models import Device, Stream, Recording, Bookmark, Snapshot, AIEvent, AIModelAssignment
+from app.models import Device, Stream, Recording, Bookmark, Snapshot, AIEvent, AIModel, AIModelAssignment
 
 # this is the Alembic Config object
 config = context.config
